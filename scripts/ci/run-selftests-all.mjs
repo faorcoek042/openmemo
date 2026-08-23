@@ -47,9 +47,10 @@
  * 有一环红时**后面的环仍然被执行**（拿一条故意在中间红的假链跑）、
  * 以及"一条都没解析出来"必须红（空转防线）。
  */
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
+import { SKIP_EXIT_CODE } from './platform-scope.mjs';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -146,8 +147,26 @@ export async function runAll({ chain, cwd, minLinks = MIN_LINKS, quiet = false }
     const ms = Date.now() - t0;
     // spawnSync 超时会给 signal=SIGTERM 且 status=null；status=null 也可能是 spawn 失败。
     const timedOut = r.error?.code === 'ETIMEDOUT' || (r.status === null && r.signal != null);
+    /*
+     * ★ 250 = `platform-scope.mjs` 的「本平台上无意义，跳过」。
+     *   它**不是**通过：单独计数、单独一栏、单独写进 JSON。
+     *   「跳过」和「通过」一旦在输出里分不开，这条链就退化成它要治的那个病。
+     */
+    const skipped = r.status === SKIP_EXIT_CODE && !timedOut;
     const ok = r.status === 0;
-    results.push({ label, ok, status: r.status, timedOut, spawnError: r.error?.message, ms });
+    results.push({
+      label,
+      ok,
+      skipped,
+      status: r.status,
+      timedOut,
+      spawnError: r.error?.message,
+      ms,
+    });
+    if (skipped) {
+      say(`───── ${n} ◐ ${label} —— 按平台收窄，本平台跳过（不计入绿）`);
+      continue;
+    }
     if (!ok) {
       say(
         `───── ${n} ✘ ${label} —— ` +
@@ -160,13 +179,51 @@ export async function runAll({ chain, cwd, minLinks = MIN_LINKS, quiet = false }
       );
     }
   }
-  return { ok: results.every((r) => r.ok), results, fatal: null };
+  return { ok: results.every((r) => r.ok || r.skipped), results, fatal: null };
 }
 
 async function main() {
   const pkg = JSON.parse(await readFile(join(REPO_ROOT, 'package.json'), 'utf8'));
   const chain = String(pkg.scripts?.['test:ci-scripts'] ?? '');
   const { results, fatal } = await runAll({ chain, cwd: REPO_ROOT });
+
+  /*
+   * `--json <path>`：给 `xplat-ratchet.mjs` 读的**结构化**结果。
+   *
+   * ⚠️ 这不是锦上添花。棘轮的第一版是去**刮**下面那段人类可读汇总的，
+   * 而它当场刮错了：`══ 汇总（` 这个锚点在 `selftest-ci-manifest` 的输出里也有，
+   * 于是刮到了另一个脚本的汇总，报出 "16 环" 而真值是 37 —— 而且**它不会红**，
+   * 只会把基线对比建立在一份残缺的今日集合上。
+   * **能产出结构化结果的东西，就不该让别人去刮它的人类可读输出。**
+   */
+  const jsonAt = process.argv.indexOf('--json');
+  if (jsonAt >= 0) {
+    const out = process.argv[jsonAt + 1];
+    if (!out) {
+      console.error('✘ run-selftests-all: --json 后面没给路径');
+      process.exit(1);
+    }
+    await writeFile(
+      out,
+      JSON.stringify(
+        {
+          platform: process.platform,
+          arch: process.arch,
+          total: results.length,
+          links: results.map((r) => ({
+            label: r.label,
+            status: r.skipped ? 'skip' : r.ok ? 'pass' : 'fail',
+            exit: r.status,
+          })),
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    console.log(`   （逐环结果已写入 ${out}）`);
+  }
+
   if (fatal) {
     console.error(`✘ run-selftests-all: ${fatal}`);
     process.exit(1);
@@ -175,18 +232,23 @@ async function main() {
 }
 
 function reportAndExit(results) {
-  const failed = results.filter((r) => !r.ok);
+  const failed = results.filter((r) => !r.ok && !r.skipped);
+  const skipped = results.filter((r) => r.skipped);
   console.log(`\n══ 汇总（${process.platform}/${process.arch}）══════════════════════════════`);
   for (const r of results) {
-    console.log(
-      `  ${r.ok ? '✔' : '✘'} ${r.label}` +
-        (r.ok
-          ? ''
-          : ` ← ${r.timedOut ? 'timeout' : r.spawnError ? 'spawn 失败' : `exit ${r.status}`}`),
-    );
+    const mark = r.skipped ? '◐' : r.ok ? '✔' : '✘';
+    const why = r.skipped
+      ? ' ← 按平台收窄，跳过（**不是**通过）'
+      : r.ok
+        ? ''
+        : ` ← ${r.timedOut ? 'timeout' : r.spawnError ? 'spawn 失败' : `exit ${r.status}`}`;
+    console.log(`  ${mark} ${r.label}${why}`);
   }
   if (failed.length === 0) {
-    console.log(`\n✔ run-selftests-all: ${results.length} 环全绿（${process.platform}）`);
+    console.log(
+      `\n✔ run-selftests-all: ${results.length - skipped.length} 环绿 / ` +
+        `${skipped.length} 环按平台跳过 / 0 环红（${process.platform}）`,
+    );
     return;
   }
   console.error(

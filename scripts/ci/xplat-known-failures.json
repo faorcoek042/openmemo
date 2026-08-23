@@ -1,0 +1,347 @@
+{
+  "_": "⚠️ 这个文件只能**手改**。没有任何运行时自动收录的路径 —— 见 scripts/ci/xplat-ratchet.mjs 文件头。",
+  "_为什么存在": "ci-crossplatform 每天定时跑，而它在 macOS/Windows 上今天就是红的。一个天天红的 workflow 会把人训练成略过 Actions 邮件，而那是六条 e2e 腿唯一的告警承重点。所以这条探针的判决改由棘轮给：今天的失败集合与这份基线**逐条一致**才算绿。",
+  "_两个方向": "① 出现基线里没有的 ⇒ 红（新伤）。② 基线里有一条今天居然过了 ⇒ **也红**（有人修好了，去划掉）。②那一半是这条棘轮不烂掉的全部关键 —— 只有①的棘轮会安静地烂几个月，而且看起来一直在工作。基线只能变小。",
+  "_怎么加一条": "跑一次 ci-crossplatform，把棘轮报出来的「新伤」原样粘进来，然后**必须**填 why 与 note。why 只能是 host-assumption / real-bug / unexamined 三选一；unexamined 是诚实的，编一个归因不是。",
+  "_why 的三个取值": {
+    "host-assumption": "测试自己写死了宿主假设（路径分隔符、.exe 后缀、大小写敏感性、/bin/true …）。产品没坏，但**这条用例在该平台上等于不存在**。",
+    "real-bug": "产品或守卫在该平台上真的坏了。",
+    "unexamined": "还没查。**不许**因为懒就写成 host-assumption —— 那正是「把该修的写成边界」。"
+  },
+  "_按平台收窄的不在这里": "objdump / ldd / Linux 容器 / ELF 那几条自检是**范畴错误**，已由 scripts/ci/platform-scope.mjs 在源头跳过（汇总里记 ◐，不记 ✔）。收窄完还红的才进这份基线。",
+  "_一个小号现场": "上一轮我自己在新写的自检里犯了 new URL().pathname（Windows 上拼成 D:\\D:\\a\\…）。抓到它的正是「链条跑到底」那个改动 —— 那条自检排在 37 环里的第 36 环，短路版结构上走不到，而 ci.yml（ubuntu）永远绿。它证明了这两件事不是空转。",
+  "recordedAtVersion": "0.7.4",
+  "recordedFromRun": "32656407764",
+  "recordedAt": "2026-08-23",
+  "platforms": {
+    "linux-x64 (control)": {
+      "_": "对照组：它与 ci.yml 跑的是同一批检查，所以基线**必须是空的**。这里一旦冒出一条，那就是主线真的坏了。",
+      "tests": [],
+      "selftests": []
+    },
+    "win32-x64": {
+      "tests": [
+        {
+          "id": "packages/pipeline › T-162 ① 选择决定跑哪个包（而不是 readdir 顺序） › ★ 同一份磁盘布局：选 vulkan 跑 vulkan 包，选 cpu 跑 cpu 包",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "packages/pipeline › T-162 ① 选择决定跑哪个包（而不是 readdir 顺序） › ★ 偏好走产品的真实通道（<storeRoot>/prefs.json），不用传参也要生效",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "packages/pipeline › T-162 ① 选择决定跑哪个包（而不是 readdir 顺序） › 安装（创建）顺序不影响结果 —— 两种顺序建同样的两个包，答案逐字相同",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "packages/pipeline › T-162 ② 用户没选过时按 priority 挑 › ★ 同一份布局：priority 90 的包赢；把两个 priority 对调，答案就反过来",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "packages/pipeline › T-162 ② 用户没选过时按 priority 挑 › 显式选择压过 priority（选了低优先级的那个，就跑它）",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "packages/pipeline › T-162 ② 用户没选过时按 priority 挑 › 老安装记录没有 priority 字段时按 0 处理，且仍然确定 —— 不落回 readdir",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "packages/pipeline › T-162 ② 用户没选过时按 priority 挑 › ★ 平手时排的是 packId，不是目录名 —— 两者刻意反序，钉住到底按哪个",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "packages/pipeline › T-162 ③ 选中的包里没有这个文件时回退，并且说出来 › ★ 选了 vulkan，但 vulkan 包里没有 whisper-cli → 用 cpu 包的，degraded=true",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "packages/pipeline › T-162 ③ 选中的包里没有这个文件时回退，并且说出来 › ★ 不相干的工具不算降级 —— 选了 vulkan，ffmpeg 来自 media-tools 是正常的",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "packages/pipeline › T-162 ④ 没有安装记录的目录：排在后面，且不冒充任何包 › 有记录的包优先于没记录的目录（后者是装到一半 / 手工解包的产物）",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "packages/pipeline › T-162 ④ 没有安装记录的目录：排在后面，且不冒充任何包 › 只有无记录目录时仍然找得到，但如实说\"来源不明\"且不声称降级",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "packages/pipeline › T-162 ⑤ 回归：扁平布局 / 找不到 / 坏 prefs › prefs.json 坏了 / 后端名不认识 → 当作\"没选过\"，不当作偏好",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › D:\\\\a\\\\openmemo\\\\openmemo\\\\apps\\\\daemon\\\\dist\\\\http\\\\noteRestore.test.js",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "整个测试文件级失败（不是某一条用例）—— 本轮未查"
+        },
+        {
+          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★★ pending-ci 的包：直接 POST 必须 409，不许静默 202 起一个必然失败的 job",
+          "why": "host-assumption",
+          "since": "0.7.4",
+          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
+        },
+        {
+          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★ published 的包照常 202（这道闸不许误伤正常安装）",
+          "why": "host-assumption",
+          "since": "0.7.4",
+          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
+        },
+        {
+          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★ 字段缺失照常 202（目录里 12/14 个包根本没写这个字段）",
+          "why": "host-assumption",
+          "since": "0.7.4",
+          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
+        },
+        {
+          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★ 409 带 remediation，且它的 action 在前端两张表里有登记（不许掉进兜底）",
+          "why": "host-assumption",
+          "since": "0.7.4",
+          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
+        },
+        {
+          "id": "apps/daemon › \\#87 系统里已经有一份 ⇒ 目录要说出来（但不许说成\"已安装\"） › ★ 用户自己 brew install 的那份被解析到 ⇒ 这一格必须有证据（就是那条路径）",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › \\#87 系统里已经有一份 ⇒ 目录要说出来（但不许说成\"已安装\"） › ★★ 反例：落在我们自己 store 里的那份，不许被说成\"系统里已经有\"",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › 正在被使用、却没有安装记录的那一份，目录要说出来（T-197） › ★ 盘上有一份没人记录的 ffmpeg 正被解析到 ⇒ 目录里这一格必须有证据",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › 无法识别的残留：看得见 / 删得掉 / 删之前证明没在用（T-193 ②） › ★★ 第二道闸：产品自己解析到的残留**不许**被算成可回收，也不许被删",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › POST /api/notes/upload › 扩展名不在白名单 → 415，且不留任何文件",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（socket 写入时序：Linux 缓冲得下、win/mac EPIPE），本轮未查"
+        },
+        {
+          "id": "apps/daemon › POST /api/notes/upload › 超出上限 → 413（Content-Length 预检 + 流式中途两条路径），半成品被删除",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（socket 写入时序：Linux 缓冲得下、win/mac EPIPE），本轮未查"
+        },
+        {
+          "id": "apps/daemon › T-162 ② 选择一路走到 buildPipeline 交出去的那个 whisper-cli › ★ 同一个数据目录、同样两个包：选 vulkan 与选 cpu 必须给出不同的二进制",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › T-162 ② 选择一路走到 buildPipeline 交出去的那个 whisper-cli › ★ 选中的包里没有 whisper-cli → 退回 cpu 包，且 bundle 上留下 degraded=true",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › T-173 ★ 残留情形：包已装好、之后缓存才变冷 —— 现在真的能自愈 › 端到端：跳闸 → 冷却 → 后台恢复探测活过 10s → 断路器彻底复位（用户零操作）",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › T-173 ★ 残留情形：包已装好、之后缓存才变冷 —— 现在真的能自愈 › 对照组：恢复探测**也失败**时不许报好，且退避后重新计时（证明上面那些断言有区分力）",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › T-173 ★ 残留情形：包已装好、之后缓存才变冷 —— 现在真的能自愈 › 单飞：冷却到期后并发打 5 发，只许起**一个**恢复探测",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › T-175 手点「立刻重试」= 后台恢复那条路（不是就地探一发） › ★ 冷却期内手点：不等那一发、当次请求立刻回，且报\"正在重试\"",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › T-175 手点「立刻重试」= 后台恢复那条路（不是就地探一发） › ★ 单飞与手点共存：已经有一发在跑时，手点是\"加入等待\"，不是再起一发、也不是报错",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › 自检可以钉住某一个后端包（T-166 ①） › ★ 同一份磁盘布局：点 CPU 卡片测 CPU 包，点 Vulkan 卡片测 Vulkan 包",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › 自检可以钉住某一个后端包（T-166 ①） › ★ 钉住的包里没有 whisper-cli → blocked，**绝不回退到另一个包**",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › 自检可以钉住某一个后端包（T-166 ①） › ★ 钉住时 `bin/runtime` 里的手工布局也不许赢 —— 它不属于任何包",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › 自检可以钉住某一个后端包（T-166 ①） › 不钉住时行为**一个字不变**：仍按统一规则（priority 高的赢）",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › T-172 捂热：只在 macOS 上做，且只在真有 Metal 库时做 › ★ macOS 且有 probe，但目录里没有 Metal 的 ggml 库：跳过",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › T-172 捂热：只在 macOS 上做，且只在真有 Metal 库时做 › ★ macOS + probe + libggml-metal：真的跑，且 onBeforeProbe 在开跑前被调用一次",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › T-172 捂热：PROBE_TIMEOUT_MS 一个字都没动 › ★ 捂热用自己的预算，作为入参传给产品自己的 runProbe（且明显大于 10s 阈值）",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › ★★ T-172 捂热：六组敌对输入，一组都不许抛 › ★ 真实 runProbe（不注入）+ 一个立刻退出 1 的假探针：照样不抛",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › ★ T-166 部分结果不许被当成\"检查通过\" › ★ 前提成立：造出来的子树确实让遍历\"走到一半\"才失败",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › ★ T-166 部分结果不许被当成\"检查通过\" › ★ 遍历到一半失败：好的那半照常报出来，坏的那半必须记进 unscanned",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › ★ T-166 部分结果不许被当成\"检查通过\" › 源目录本来就有读不动的地方 → 移动**当场拒绝**，源完好（不是走到一半才发现）",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        },
+        {
+          "id": "apps/daemon › ★ T-166 部分结果不许被当成\"检查通过\" › ★★ 调用方：扫不全时**不许**报成干净 —— warningZh 必须说出来",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "疑似宿主假设（.exe 后缀 / 路径分隔符 / 大小写不敏感 FS），本轮未逐条查"
+        }
+      ],
+      "selftests": [
+        {
+          "id": "node scripts/ci/selftest-bundle.mjs",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "20/27 红。verify-bundle.sh 的夹具是 Linux 形状（.so / 目录布局）；本轮未逐条查"
+        },
+        {
+          "id": "node scripts/ci/selftest-e2e-runtime.mjs",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "本轮未查"
+        },
+        {
+          "id": "node scripts/ci/selftest-resolve-bundle.mjs",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "11 条里只红 A3 一条（tar 解开 .tar.gz）。近乎全绿，值得单独查一次；本轮未查"
+        }
+      ]
+    },
+    "darwin-arm64": {
+      "tests": [
+        {
+          "id": "apps/daemon › \\#77 finding① self-lock —— server.close() 不能被\"一直在轮询\"的连接绑架 › ★ 客户端轮询间隔快于 keepAliveTimeout 时，stop() 必须在宽限期+余量内返回，且必须留下强制关闭日志",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "macOS 上没观测到「强制关闭」日志；疑似 keepAlive 行为差异，本轮未查"
+        },
+        {
+          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★★ pending-ci 的包：直接 POST 必须 409，不许静默 202 起一个必然失败的 job",
+          "why": "host-assumption",
+          "since": "0.7.4",
+          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
+        },
+        {
+          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★ published 的包照常 202（这道闸不许误伤正常安装）",
+          "why": "host-assumption",
+          "since": "0.7.4",
+          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
+        },
+        {
+          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★ 字段缺失照常 202（目录里 12/14 个包根本没写这个字段）",
+          "why": "host-assumption",
+          "since": "0.7.4",
+          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
+        },
+        {
+          "id": "apps/daemon › T-196 ④ 服务端也要有「能不能装」这道闸 › ★ 409 带 remediation，且它的 action 在前端两张表里有登记（不许掉进兜底）",
+          "why": "host-assumption",
+          "since": "0.7.4",
+          "note": "夹具克隆 linux-x64 的包再断言它能装 —— 平台闸先响。已修（见 backendInstallAvailability.test.ts），预期本条会从基线里消失"
+        }
+      ],
+      "selftests": [
+        {
+          "id": "node scripts/ci/selftest-bundle.mjs",
+          "why": "unexamined",
+          "since": "0.7.4",
+          "note": "同 win32：夹具是 Linux 形状；本轮未逐条查"
+        },
+        {
+          "id": "node scripts/ci/selftest-locale-ratchet.mjs",
+          "why": "real-bug",
+          "since": "0.7.4",
+          "note": "★ 它的空转防线正确地响了：「只从提交树里扫到 0 个 t() 字面量 key —— 扫描坏了」。check-locale-ratchet.mjs 的扫描器在 macOS 上取不到源码集合。该守卫在 ci.yml 里只跑 Linux，所以产品未受影响；但这是一条真的宿主依赖"
+        }
+      ]
+    }
+  }
+}

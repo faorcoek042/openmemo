@@ -1,0 +1,79 @@
+# 行尾统一为 LF，**包括 Windows 上的检出**。
+#
+# ── 为什么这个文件到今天才出现（2026-08-23）────────────────────────────────────
+#
+# GitHub 托管的 Windows runner 上 git 的 `core.autocrlf` 默认是 `true`。
+# 在此之前本仓**没有** `.gitattributes`，所以 `.github/workflows/*.yml`
+# 在 Windows runner 上落盘时是 `\r\n`。
+#
+# 直接后果，`[实测 run 32656407764]`：`scripts/ci/selftest-workflow-gates.mjs`
+# 在 win32 上 `61 passed, 8 failed`，而 linux 与 darwin 都是 `72 passed, 0 failed`。
+# 红的全是 C 组 —— 那一组要**把修法退回去**再看断言会不会变红，
+# 而"退回去"是对 YAML 原文做字符串手术，锚点里带着字面的 `\n`：
+#
+#     text.replace('    needs: [audit, mutations]\n', '    needs: [audit]\n')
+#     lines.findIndex((l) => l === `  ${jobName}:`)     // CRLF 下实得 "  attest:\r"
+#
+# CRLF 下这些锚点一条都对不上。
+#
+# ★ 值得记的是**它红的方向**：那八条不是"判错了"，是脚本发现自己
+#   **没能把缺陷注进去**，于是拒绝把这次反向验证算成绿（"锚点漂了，别当它绿"）。
+#   `[已核]` A/B/D 三组在 CRLF 下逐格与 LF 完全一致 ——
+#   **六条 e2e 腿的「没钉批次就不发凭证」这道闸在 Windows 上没有判错。**
+#   失败是 fail-closed 的：它会少给信心，不会多给。
+#
+# ── 为什么修这里而不是在脚本里逐处 normalize ──────────────────────────────────
+#
+# 逐处 normalize 要改 9 个 `readFileSync` 调用点，而**漏掉一个不会红**——
+# 只会让某一条反向验证悄悄失效，正是这个仓库一直在清的形状。
+# 在检出边界上统一，是一次到位、且新写的代码自动继承的做法。
+#
+# ⚠️ 另一个诱人但错误的修法：在 win32 上跳过 C 组。那会**永久隐藏 C1/C2/C3**
+#   （C0 拿不到退回后的文本时，那三条根本不执行），而 C1 是整个凭证模拟器
+#   对着真实事故 run `31568740737` 的**唯一一处标定**。
+#   顺带：那三条在 Windows 上此前就是这么消失的（72 → 69），
+#   而 `selftest-workflow-gates.mjs` 的下限 `FLOOR = 60` 太松，没接住。
+#   该下限已同步收紧。
+
+# 默认：所有被 git 认成文本的文件，工作区一律 LF。
+* text=auto eol=lf
+
+# 明确点名几类关键文本，免得 `text=auto` 的启发式把它们猜成二进制。
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.json   text eol=lf
+*.mjs    text eol=lf
+*.js     text eol=lf
+*.ts     text eol=lf
+*.tsx    text eol=lf
+*.md     text eol=lf
+*.sh     text eol=lf
+*.sql    text eol=lf
+
+# ⚠️ 这些必须是 LF，否则在 Linux 上根本执行不了（`bash\r: no such file`）。
+scripts/**/*.sh          text eol=lf
+scripts/ci/*.Dockerfile  text eol=lf
+
+# 二进制：不许 git 碰它们的字节。
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.webp   binary
+*.pdf    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.wav    binary
+*.mp3    binary
+*.mp4    binary
+*.gguf   binary
+*.node   binary
+*.so     binary
+*.dylib  binary
+*.dll    binary
+*.tar.gz binary
+*.tgz    binary
+*.zip    binary
+*.xz     binary

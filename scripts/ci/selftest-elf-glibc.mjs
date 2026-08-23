@@ -34,6 +34,26 @@ import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:f
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { narrowTo } from './platform-scope.mjs';
+
+/*
+ * ★ 只在 Linux 上跑（2026-08-23 收窄）。
+ *
+ * `[实测 run 32651393827 / 32656407764]` win32 上这条自检 21/34 红，
+ * 每条的成因都是同一句 `objdump: … file format not recognized`：
+ * 上面那段"桩掉 objdump"在 Windows 上**没有生效**，真 objdump 上场，
+ * 对着本文件造的 Linux ELF 夹具当然读不懂。
+ */
+narrowTo(['linux'], {
+  subject: 'scripts/ci/check-elf-glibc.mjs —— 读 ELF 动态符号表、判 glibc/GLIBCXX/CXXABI 下限',
+  why:
+    'ELF 与 glibc 是 Linux 的东西：这个检查器只被 build-backends 的 Linux 腿调用，' +
+    '产出的判决只对 Linux 产物有意义。在 macOS/Windows 上跑它是范畴错误 —— ' +
+    '那里的红说的是"桩没生效"，不是"判定逻辑坏了"。',
+  lost:
+    '解析与阈值那段逻辑本身是平台无关的纯函数，本可以在三平台各验一遍；' +
+    '收窄之后它只在 Linux 上被验。损失有限（同一份代码、同一个结论），但不是零。',
+});
 
 const WORK = mkdtempSync(join(tmpdir(), 'om-elfglibc-'));
 process.on('exit', () => rmSync(WORK, { recursive: true, force: true }));

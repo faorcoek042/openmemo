@@ -152,6 +152,61 @@ function inapplicableKind(
 }
 
 /**
+ * `Inapplicability` → **一行事实**，给 HTTP 错误信封里那句 `message` 用。
+ *
+ * ## ⚠️ 这里刻意**不是**一张译文表
+ *
+ * #106 把「为什么装不了」从一句中文散文换成了机器可读的记录，并把**全部措辞**搬去
+ * `apps/web` 的两份 locale（`features/runtime/reasonKeys.ts` 的 `inapplicabilityText()`
+ * 已经为四档各写了话）。daemon 在这里再写一张散文表，等于把 #106 刚合并掉的那件事
+ * 复制一份出来 —— 两份必然漂移，而且 daemon 这份没有 i18n，英文界面上照旧出中文。
+ * 所以下面每一档吐的都是 **kind + 记录里的结构字段**（事实，不是句子），
+ * 与 `Inapplicability.detail` 上那句「原文不翻译」是同一条纪律。
+ *
+ * ## 它修的是什么
+ *
+ * 上一版是 `${reason ?? 'unknown'}`：`??` 只挡 `null`，一个**非空对象**照样被模板
+ * 字面量拼成 **`[object Object]`**。而这串是**用户可见**的：`apps/web` 的 `ErrorBlock`
+ * 没有 `errors.CONFLICT` 这个 locale key，于是它把服务端的 `messageZh`/`message`
+ * **原样**当成错误标题渲染出来。
+ *
+ * ## 仍然没关上的那一格（别当它已经关了）
+ *
+ * 正确的做法是 web 拿 `error.details`（下面 `sendError` 已经把原始记录发出去了）
+ * 走 `inapplicabilityText()` 渲染。今天它还没有：缺 `errors.CONFLICT` 这个 key，
+ * web 只能落回这句原文。所以这行字的定位是**排障用的可读兜底**，不是最终形态。
+ *
+ * ## 为什么 `default` 里那一句比上面四行都重要
+ *
+ * 这里的缺陷类不是"这四档措辞不好"，是"**将来第五档会静默退化回 `[object Object]`**"。
+ * `satisfies never` 让那一天**编译当场红**，而不是等某个用户截图给我们看。
+ */
+function inapplicabilityFacts(reason: Inapplicability, platform: PlatformSelector): string {
+  switch (reason.kind) {
+    case 'platform_mismatch':
+      return (
+        `platform_mismatch (pack is ${reason.packOs}/${reason.packArch}, ` +
+        `this machine is ${platform.os}/${platform.arch})`
+      );
+    case 'hardware_not_probed_yet':
+      return 'hardware_not_probed_yet';
+    case 'backend_unavailable':
+      // `detail` 是 `manager.ts` 那句英文技术原话，**不翻译**（见 Inapplicability 的注释）。
+      return `backend_unavailable (${reason.unavailableKind}${
+        reason.detail === null ? '' : `: ${reason.detail}`
+      })`;
+    case 'backend_status_missing':
+      return 'backend_status_missing';
+    default:
+      // 新增一档而这里没写事实 ⇒ 这一行编译不过（这才是本次修的东西）。
+      reason satisfies never;
+      // 万一真跑到这里（比如旧 daemon 收到新 daemon 写的数据），也**不许**回到
+      // `[object Object]`：JSON 至少把字段都说出来。
+      return `unknown (${JSON.stringify(reason)})`;
+  }
+}
+
+/**
  * 目录条目 → 安装记录。
  *
  * ── 为什么它是一个**导出的纯函数**，而不是留在 `startPackInstall` 里 ────────────────
@@ -675,12 +730,33 @@ export async function handleBackendRoutes(
     }
     const { applicable, reason } = applicability(state, pack);
     if (!applicable) {
+      /*
+       * ★ `reason` 是**对象**（`Inapplicability`，四档判别联合），不是字符串。
+       *
+       * 上一版直接 `${reason ?? '原因未知'}` —— `??` 只挡 `null`，非空对象拼出来是
+       * **`[object Object]`**，而且**用户看得见**（web 的 `ErrorBlock` 没有
+       * `errors.CONFLICT` 这个 locale key，于是原样把 `messageZh` 当标题渲染）。
+       *
+       * daemon **不翻译**这四档：#106 已经把措辞整条搬去 web 的 locale
+       * （`apps/web/src/features/runtime/reasonKeys.ts` 的 `inapplicabilityText()`
+       * 是那张总表，见 `packages/shared/src/hardware.ts` 上 `Inapplicability` 的注释）。
+       * 这里只吐 kind + 结构字段这类**事实**，详见 `inapplicabilityFacts()`。
+       *
+       * ⚠️ **这一格还没关上**：`details` 里已经把原始记录发出去了，但 web 今天不读它
+       * （缺 `errors.CONFLICT`），仍然落回下面这句原文。要真正修好得在 web 侧补 key
+       * 并改走 `inapplicabilityText(error.details)`。写在这里是为了让那件事**有名字**，
+       * 不是假装它已经做完了。
+       */
+      const facts = reason === null ? 'unknown' : inapplicabilityFacts(reason, currentPlatform());
       sendError(
         res,
         409,
         'CONFLICT',
-        `pack ${id} is not applicable to this machine: ${reason ?? 'unknown'}`,
-        `该后端包不适用于本机：${reason ?? '原因未知'}`,
+        `pack ${id} is not applicable to this machine: ${facts}`,
+        `该后端包不适用于本机：${facts}`,
+        // `reason === null` 时**不发** `details`（发一个 `null` 是在说"我判定了、但没有
+        // 理由"，那是另一句话）—— `respond.ts` 只在 `undefined` 时省略这一格。
+        reason === null ? {} : { details: reason },
       );
       return true;
     }
