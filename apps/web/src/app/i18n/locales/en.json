@@ -318,7 +318,7 @@
     "inapplicableHint": "(they cannot be installed on this machine and there is nothing to do about it; listed so you know what the catalog holds)",
     "localBlockedSummary": "{{n}} pack(s) built for this machine that cannot be installed right now",
     "localBlockedHint": "(these were built for this OS and CPU — each card states whether that is \"not probed yet\" or \"probed, confirmed unsupported\")",
-    "rtfNote": "Note: the RTF in a self-test is **measured on this machine**; the \"estimated time\" on model cards is extrapolated from it — treat it as indicative.",
+    "rtfNote": "Note: the RTF in a self-test is **measured on this machine**; the \"estimated time\" on model cards is an **estimate** extrapolated from it — treat it as indicative.",
     "installTarget": "Backend packs install onto the volume holding the models directory ({{free}} free).",
     "confirmRemove": "Uninstall this acceleration backend? You can download it again later.",
     "pack": {
