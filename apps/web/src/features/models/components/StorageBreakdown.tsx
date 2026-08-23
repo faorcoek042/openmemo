@@ -69,7 +69,17 @@ export function StorageBreakdown({ storage, locale, onGc, gcPending }: StorageBr
        * 与 `RemediationButton` 的 `labelZh` 是同一个形状：有翻译没用上
        * （`models.storage.reclaimable` 里早就有 "unrecognised leftovers"）。
        */
-      label: x.kind === 'unclaimed' ? t('models.storage.unclaimedSegment') : x.displayName,
+      /*
+       * ⚠️ 件数**必须带上**：「4 项」和「400 项」会让用户做不同的事，而这是全界面
+       * 唯一说得出它的地方（下面那行「可回收」只有字节）。老 daemon 不发 `itemCount`
+       * 时退回不带件数的那句 —— 不编一个数出来。
+       */
+      label:
+        x.kind === 'unclaimed'
+          ? typeof x.itemCount === 'number'
+            ? t('models.storage.unclaimedSegmentN', { n: x.itemCount })
+            : t('models.storage.unclaimedSegment')
+          : x.displayName,
       bytes: x.bytes,
       color: CAT_COLOR[i],
       active: x.active,

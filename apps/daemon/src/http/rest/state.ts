@@ -1682,7 +1682,20 @@ export class RestState {
          * 这里仍然发一句中文，只是给**旧前端**兜底，别让它显示空白。
          */
         kind: 'unclaimed' as const,
+        /*
+         * ⚠️ **这句中文还在，而且这条只在消费端绕过去了，没在生产端治。**
+         *
+         * `StorageBreakdown` 现在按 `kind` 取词条，所以 `/models` 那一处不再读它 ——
+         * 但**任何别的消费者拿到的仍然是这句中文**（契约上 `displayName` 是必填的
+         * 自由文本，没有语言维度）。留着它只是给**旧前端**兜底，别让它显示空白。
+         *
+         * 真正的治法是让 daemon 不再拼句子（同 `Remediation.labelZh` / `Inapplicability`
+         * 那两轮的做法：契约换成机器可读，措辞归两份 locale）。**本轮按 Coordinator
+         * 裁定不做，立此条目。** 新代码不许再往这个字段里拼句子。
+         */
         displayName: `无法识别的残留（${String(unclaimed.length)} 项）`,
+        // ★ 件数单独一格：界面按 kind 取词条之后，那句中文里的「（N 项）」就到不了屏幕了。
+        itemCount: unclaimed.length,
         bytes: unclaimed.reduce((a, x) => a + x.bytes, 0),
         active: unclaimed.some((x) => x.inUseBy !== null),
       });

@@ -14446,6 +14446,62 @@ describe('#105 ④ 折叠区那 20 颗禁用按钮 —— 要么不渲染，要�
     }
     r.unmount();
   });
+
+  /*
+   * ★★ **开的药不许是用户已经吃过的那副。**
+   *
+   * T-191 花了一整轮治这个：`hardware_not_probed_yet` 原文是「请先安装 CPU 基础包」，
+   * 而 `[用户真机实测 2026-08-09]` 他**早就装了** —— 照做无事可发生。
+   * 修法是给那句话补一个"已经装了的话怎么办"的分支
+   * （今天英文里那半句是 `(if you already did, press Update on it on the Components page)`）。
+   *
+   * ⚠️ 然后我在 2026-08-24 新写 `backendNotInstalledHere` 时**原样又开了一遍那副药**
+   * （「先装 CPU 基础包：它带着探针，装完会自动重测一次」），而复核实测那台机器上
+   * CPU 包**已装、正在用、探针已跑**。同一个坑，隔了 15 天，换了个 key 又踩一次。
+   *
+   * 所以把它钉成**跨 key 的不变式**，而不是又改一句话：
+   * `runtime.pack.inapplicable.*` 里**任何**一条只要开了"装 CPU 基础包"这副药，
+   * 就必须同时说清"已经装了的话怎么办"。判据落在**两份 locale 的文本**上 ——
+   * 新写一条犯同样错的词条，这里当场红。
+   *
+   * （允许读散文：失败模式是构建变红，不是界面上一个安静的假色 ——
+   *   界线见 `features/components/sha256ProvenanceRegex.test.ts` 抬头。）
+   */
+  test('★★ 任何「先装 CPU 基础包」的话，都得带上「已经装了的话怎么办」', () => {
+    const PRESCRIBES = { zh: /装\s*CPU\s*基础包/, en: /install the CPU base pack/i };
+    const HAS_ESCAPE = { zh: /已装|已经装/, en: /already/i };
+
+    for (const [lang, locale] of [
+      ['zh', zhLocale],
+      ['en', enLocale],
+    ] as const) {
+      const bucket = (
+        locale as unknown as {
+          runtime: { pack: { inapplicable: Record<string, string> } };
+        }
+      ).runtime.pack.inapplicable;
+      const entries = Object.entries(bucket).filter(([, v]) => typeof v === 'string');
+      assert.ok(entries.length > 0, `${lang}: inapplicable 那一组是空的 —— 这条在空转`);
+
+      const prescribing = entries.filter(([, v]) => PRESCRIBES[lang].test(v));
+      assert.ok(
+        prescribing.length > 0,
+        `${lang}: 没有任何一条提到"装 CPU 基础包" —— 这条禁止项的前提没了，要重想`,
+      );
+
+      const missingEscape = prescribing
+        .filter(([, v]) => !HAS_ESCAPE[lang].test(v))
+        .map(([k]) => k);
+      assert.deepEqual(
+        missingEscape,
+        [],
+        `${lang}: 这几条让用户"装 CPU 基础包"，却没说"已经装了的话怎么办"：` +
+          `${missingEscape.join(', ')}\n` +
+          `  T-191 实测过：那台机器上它早就装了，照做无事可发生 —— ` +
+          `一句用户已经做过的建议，和没有建议是一回事。`,
+      );
+    }
+  });
 });
 
 describe('#105 ⑤ 诊断页「去修复」—— 落在能修的那一格上', () => {

@@ -211,6 +211,7 @@
       "reclaimable": "Reclaimable: unfinished downloads {{partials}} · orphan blobs {{orphans}} · unrecognised leftovers {{unclaimed}}",
       "unknownAmount": "unknown",
       "unclaimedSegment": "Unrecognised leftovers",
+      "unclaimedSegmentN": "Unrecognised leftovers ({{n}})",
       "gc": "Reclaim {{size}}"
     },
     "fit": {
@@ -337,6 +338,7 @@
       "recommended": "Recommended",
       "loadBearing": "Fallback backend",
       "requiresDriver": "Requires driver: ",
+      "driverUnknown": "The catalog does not record whether this pack needs a driver — that means we do not know, not that none is needed.",
       "selfTestPassed": "Self-test passed",
       "selfTestNoAccel": "Ran, but acceleration was not used",
       "selfTestNoAccelDetail": "The self-test did finish a real inference, but no device was enumerated — it fell back to CPU. This pack’s acceleration is not actually in use on this machine.",
@@ -358,7 +360,7 @@
         "platformMismatch": "Built for {{os}}/{{arch}}, which is not this machine.",
         "hardwareNotProbedYet": "We have not probed this machine yet, so we cannot tell whether this pack applies. Install the CPU base pack first (if you already did, press Update on it on the Components page). Probing re-runs by itself once it is in place.",
         "backendStatusMissing": "This detection run says nothing at all about this backend — we have not measured it, so we are not calling it unsupported either.",
-        "backendNotInstalledHere": "This pack is not installed, so **nothing at all was measured** about it — that is not \"your machine does not support it\". The system does not report an adapter that could use it either, and those two together are why it cannot be installed right now. Install the CPU base pack first: it ships the probe, and detection re-runs by itself afterwards — if this machine does support it, this pack becomes installable.",
+        "backendNotInstalledHere": "The probe did run, but it **measured nothing about this backend** — this pack is not installed, and a probe run only loads the backend directory currently in use. No display adapter the system reports lists it as a candidate either. Neither signal gives positive evidence, so it cannot be installed right now — **but that is not \"confirmed unsupported\"**. If this machine really does have a discrete GPU, the driver is most likely missing: install it and restart OpenMemo to re-detect. Otherwise there is nothing to do here.",
         "verbatimDetail": "Probe output: {{detail}}"
       }
     },
