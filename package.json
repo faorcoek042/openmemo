@@ -1,7 +1,7 @@
 {
   "name": "openmemo",
   "_comment:version": "★ 产品版本号的**唯一事实来源**（D-12）。格式 0.N.P：N = 第几个可用的东西，P = 针对已交付的那个 N 的修补。工作区里其余 9 个 package.json **没有 version 字段** —— 不是同步成一样，是根本没有，这样它们就不可能和这里分叉。改这个数请用 `pnpm version:bump`（它会同时写 CHANGELOG，两者必须一致，`pnpm check:version` 守着）。这里曾经是 `0.0.0`，而界面上显示的是 daemon 里手写的另一个字面量 `0.1.0` —— 两个数互不知道对方存在，所以谁也没变过。",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "private": true,
   "type": "module",
   "description": "OpenMemo — 本地优先的 AI 笔记 / 知识捕获工具（memo.ac 复刻版）",
