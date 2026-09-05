@@ -1,20 +1,27 @@
 /**
- * LLM 用途分档（per-purpose model selection）—— **浏览器侧可用的那一份**。
+ * LLM 用途分档（per-purpose model selection）—— **全仓唯一的那一份**。
  *
- * ## 为什么不直接 import `@openmemo/llm`
+ * ## 为什么权威在这里，而不在 `@openmemo/llm`
  *
- * 权威定义在 `packages/llm/src/types.ts`，那个文件本身是纯的（零 import）。
- * 但 `@openmemo/llm` 的 `.` 导出指向 `dist/index.js`，会连带把 provider 与
- * `secrets.ts` 一起拉进来 —— 而 `secrets.ts` 里的 `chmodSync` 被打进浏览器 bundle
- * 正是刚发生过的那次「开发服务器下笔记详情页整页崩溃」。
- * 包没有 `./types` 子路径导出，所以前端**没有安全的方式**引到那个联合。
+ * `@openmemo/llm` 的 `.` 导出指向 `dist/index.js`，会连带把 provider 与 `secrets.ts`
+ * 一起拉进来 —— 而 `secrets.ts` 里的 `chmodSync` 被打进浏览器 bundle 正是那次
+ * 「开发服务器下笔记详情页整页崩溃」。包没有 `./types` 子路径导出，所以前端
+ * **没有安全的方式**引到那边的联合。
  *
  * `shared` 的约定是"**不得出现 `node:` 导入，因为它会被打进浏览器**"，
  * 放在这里是唯一既能被前端引用、又不会把 Node 代码带进 bundle 的位置。
  *
- * ⚠️ 待办（`oss-scout` 域）：`packages/llm/src/types.ts` 的 `LLM_PURPOSES` 应改为
- * `export { LLM_PURPOSES, type LlmPurpose } from '@openmemo/shared'`，
- * 否则仍是两份真相。在那之前**取值必须与该文件逐字一致** —— 已核对（2026-08，三值相同）。
+ * ## ✅ 已收敛（本轮）
+ *
+ * 这里原来挂着一句待办：「`packages/llm/src/types.ts` 的 `LLM_PURPOSES` 应改为
+ * `export { … } from '@openmemo/shared'`，否则仍是两份真相。在那之前**取值必须与该文件
+ * 逐字一致** —— 已核对（2026-08，三值相同）。」
+ *
+ * 那句待办本身就是证据：**"靠人逐字核对"是一条会过期的保证** —— 核对过一次不代表
+ * 下一次还会有人核对，而两份都改错的成本由用户承担。现在 `packages/llm/src/types.ts`
+ * 的四个符号（`LLM_PURPOSES` / `LlmPurpose` / `PurposeBinding` / `PurposeBindings`）
+ * 都是从这里再导出的，`llm` 早就声明了 `@openmemo/shared` 依赖，接上它不花任何代价。
+ * ⚠️ 别把它抄回去：`scripts/ci/check-duplicate-declarations.mjs` 会当场红。
  */
 
 /**

@@ -19,7 +19,7 @@
  * It is therefore NOT listed in package.json by this module — see D-06 §10.
  */
 
-import type { Backend } from '@openmemo/shared';
+import { ASR_SAMPLE_RATE, type Backend } from '@openmemo/shared';
 
 import type {
   AsrAvailability,
@@ -94,7 +94,19 @@ export interface SherpaModule {
   OnlineRecognizer: new (config: unknown) => SherpaRecognizer;
 }
 
-export const SHERPA_SAMPLE_RATE = 16_000;
+/**
+ * 喂给 sherpa 识别器的采样率 —— **就是全链路那一个**（`@openmemo/shared` 的 `ASR_SAMPLE_RATE`）。
+ *
+ * ⚠️ 这里**故意不是一个自己的字面量**。它原来写着 `16_000`，与 ffmpeg 的重采样目标
+ * （`audio/ffmpeg.ts` 的 `ASR_SAMPLE_RATE`）是**同一个包里的两个独立字面量**：
+ * ffmpeg 按 A 重采样、这里告诉 sherpa 是 B，A≠B 的时候**没有任何东西会报错** ——
+ * 识别器拿到的是错拍的波形，症状是整体变调 / 时间轴错位。
+ *
+ * 名字保留，因为「sherpa 要的那个率」在读代码时是个有用的说法；
+ * 将来真要分叉（某个引擎要 8 kHz），改法是**改这一行并在喂它之前真的重采样**，
+ * 而不是把字面量抄回来。
+ */
+export const SHERPA_SAMPLE_RATE = ASR_SAMPLE_RATE;
 
 export class SherpaOnnxEngine implements AsrEngine {
   readonly id = 'sherpa-onnx';

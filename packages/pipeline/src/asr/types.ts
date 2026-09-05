@@ -8,14 +8,17 @@
 
 import type { Backend } from '@openmemo/shared';
 
-/** Bit flags on `transcript_segments.flags` (D-02 §1.5). */
-export const SEGMENT_FLAG = {
-  /** Suspected repetition/hallucination — whisper's best-known failure mode. */
-  SUSPECT_REPETITION: 1 << 0,
-  LOW_CONFIDENCE: 1 << 1,
-  HUMAN_CONFIRMED: 1 << 2,
-  SILENCE_OR_MUSIC: 1 << 3,
-} as const;
+/*
+ * `transcript_segments.flags` 的位域（D-02 §1.5）—— **权威定义在 `@openmemo/shared`**，
+ * 这里只是再导出（本包的写入点 `whisperCpp.ts` / `whisperServer.ts` / `merge.ts` 一个字不用改）。
+ *
+ * ★ 收敛方向是 pipeline → shared，**不是**反过来：位域要被浏览器读（段落上的标记要画出来），
+ *   而 `@openmemo/pipeline` 依赖 `node:` 与子进程，前端打不进去。shared 是两边都够得着的
+ *   唯一位置。⚠️ 名字用的是**本包这一套**（`SUSPECT_REPETITION` / `HUMAN_CONFIRMED` /
+ *   `SILENCE_OR_MUSIC`）—— 判据是"哪个名字在它被写入时是可断言的"，逐位的对照表写在
+ *   `packages/shared/src/notes.ts` 那份声明上面。
+ */
+export { SEGMENT_FLAG } from '@openmemo/shared';
 
 export interface WordTimestamp {
   w: string;

@@ -13,7 +13,18 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-export type SecretEncoding = 'plain' | 'os-keychain-ref' | 'aes-gcm';
+import type { MaskedSecret, SecretEncoding, SecretsDisclosure } from '@openmemo/shared';
+
+/*
+ * ★ 这三个是**对外契约**，权威定义搬到 `@openmemo/shared` 了；本文件留的是**实现**
+ *   （明文文件、0600、`chmodSync`）—— 那部分必须留在这里，它要碰 `node:fs`。
+ *
+ *   搬家的理由：这三个形状要被 daemon 发出去、被浏览器读，而 `@openmemo/llm` 的 `.`
+ *   导出会把本文件的 `chmodSync` 一起拉进浏览器 bundle，所以**前端够不着这里**。
+ *   分叉的账（daemon 的 `*Like` 与 web 各把 `'plaintext-file'` 放宽成了 `string`）
+ *   记在 `packages/shared/src/secrets.ts` 的文件头。
+ */
+export type { MaskedSecret, SecretEncoding, SecretsDisclosure };
 
 export interface SecretRecord {
   readonly value: string;
@@ -24,23 +35,6 @@ export interface SecretRecord {
 interface SecretsFile {
   schema: 1;
   secrets: Record<string, SecretRecord>;
-}
-
-/** 掩码后的密钥信息 —— **API 响应与日志只能出现这个形状**。 */
-export interface MaskedSecret {
-  readonly key: string;
-  readonly masked: string;
-  readonly enc: SecretEncoding;
-  readonly updatedAt: number;
-}
-
-export interface SecretsDisclosure {
-  readonly storage: 'plaintext-file';
-  readonly path: string;
-  readonly filePermission: string;
-  readonly dirPermission: string;
-  readonly messageZh: string;
-  readonly message: string;
 }
 
 export class SecretStore {

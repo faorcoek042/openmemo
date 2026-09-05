@@ -16,14 +16,23 @@
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { ASR_CHANNELS, ASR_SAMPLE_RATE } from '@openmemo/shared';
+
 import { buildArgv } from '../subprocess/argGuard.js';
 import { run, runOrThrow } from '../subprocess/runner.js';
 import { ffmpegProxySupport, type ProxyConfig } from '../subprocess/proxy.js';
 import type { ToolPaths } from '../tools.js';
 
-/** ASR input format: whisper.cpp and sherpa-onnx both want 16 kHz mono PCM. */
-export const ASR_SAMPLE_RATE = 16_000;
-export const ASR_CHANNELS = 1;
+/*
+ * ASR input format: whisper.cpp and sherpa-onnx both want 16 kHz mono PCM.
+ *
+ * ★ 这两个数**搬去 `@openmemo/shared` 了**，这里只是再导出（调用方一个字不用改）。
+ *   它们原来在四个包里各写一份（web 采集、daemon 的 WS + WAV 头、这里的重采样目标、
+ *   sherpa 的识别器配置），**四个名字还各不相同** —— 于是「重名」那条判据对它全盲，
+ *   而它是条实打实的跨进程协议常量：中间没有任何一次重采样，一处改了别处不会红，
+ *   症状是识别结果整体错位。理由与消费者清单写在 `packages/shared/src/audio.ts`。
+ */
+export { ASR_CHANNELS, ASR_SAMPLE_RATE };
 
 export interface ProbeResult {
   durationMs: number | null;

@@ -505,13 +505,44 @@ export interface TranscriptMeta {
   segmentCount: number;
 }
 
-/** Segment flags bitfield (D-02). */
+/**
+ * `transcript_segments.flags` 的位域（D-02 §1.5）—— **全仓唯一的一份**。
+ *
+ * ## 它为什么必须只有一份
+ *
+ * 这个位域原来有**三份**：这里、`packages/pipeline/src/asr/types.ts`、
+ * `apps/web/src/lib/events/types.ts`。三处都自称对应 `transcript_segments.flags`、
+ * 都引 D-02，**位值今天对得上靠的是纪律不是机制**。
+ *
+ * 位错了的后果和别的分叉不是一个量级：**它是静默的，而且会污染已存数据** ——
+ * 写进库的是数字，读出来的是另一个含义，历史行没有任何办法回溯纠正。
+ * 而且**加第 5 个 flag 时必然分叉**：三处各自往下写 `1 << 4`，谁也不会想起另外两处。
+ *
+ * ⚠️ 更麻烦的是这三份**四个位里三个名字不同**（见下），所以按键名比对的守卫对它全盲；
+ * `scripts/ci/check-duplicate-declarations.mjs` 的「同位域」那一档**不看键名**正是为此。
+ *
+ * ## 名字为什么用 pipeline 那一套
+ *
+ * 判据是：**哪个名字在它被写入的那一刻是可断言的。**
+ *
+ * | 位 | 曾用名（本文件 / web） | 现名 | 写入点实际断言了什么 |
+ * |---|---|---|---|
+ * | 0 | `HALLUCINATION` | `SUSPECT_REPETITION` | `if (detectRepetition(text))` —— 断言的是**这段文本在重复**，"是幻觉"是结论，不是当场观测到的事实 |
+ * | 1 | `LOW_CONFIDENCE` | `LOW_CONFIDENCE` | `confidence < 0.4`，不变 |
+ * | 2 | `CONFIRMED` | `HUMAN_CONFIRMED` | 只在人编辑过的段上置位（`merge.ts`、`segmentRepo.ts` 的 `flags | 4`）——"被谁确认"是这一位的全部含义 |
+ * | 3 | `SILENCE` | `SILENCE_OR_MUSIC` | `noSpeechProb > 0.6` —— 引擎说的是"没有语音"，那可能是静音**也可能是音乐** |
+ *
+ * 三处里两处的写入点都在 pipeline（`whisperCpp.ts` / `whisperServer.ts` / `merge.ts`），
+ * 所以这套名字不只是"更准"，它还是**离写入点最近的那套**。
+ */
 export const SEGMENT_FLAG = {
-  HALLUCINATION: 1 << 0,
+  /** 疑似重复/幻觉 —— whisper 最出名的失败模式。**观测到的是重复**，结论留给读的人。 */
+  SUSPECT_REPETITION: 1 << 0,
   LOW_CONFIDENCE: 1 << 1,
-  /** Human-confirmed. Two-pass merge must NEVER overwrite a segment carrying this. */
-  CONFIRMED: 1 << 2,
-  SILENCE: 1 << 3,
+  /** 人工确认过。两遍合并**永不**覆盖带这一位的段。 */
+  HUMAN_CONFIRMED: 1 << 2,
+  /** 引擎报"无语音"。静音与纯音乐在这一位上不可分 —— 所以名字不许只说静音。 */
+  SILENCE_OR_MUSIC: 1 << 3,
 } as const;
 
 export interface TranscriptSegment {

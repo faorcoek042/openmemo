@@ -323,6 +323,24 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm check:orphans
 
+      # 「同一个概念在两个包里各声明了一份」棘轮。
+      #
+      # 它补的是 `check:orphans` **结构上管不到**的那一半：孤儿门禁判的是
+      # 「导出没人用」，而重名的两份**互相证明对方活着**（T-183 修的是"引用算给谁"，
+      # 不是"两份该不该存在"）。于是这一类缺陷对现有六道门全盲 —— 而它们
+      # **行数极小、风险最高**：`RECORD_SAMPLE_RATE` 是跨进程协议常量，
+      # 一边改了另一边不会红，症状是音频静默错采样；`SEGMENT_FLAG` 位错了
+      # 不但静默，还会污染已存的 `transcript_segments.flags`。
+      #
+      # ⚠️ 判据是**现算**的（同名跨包 / 同字面量集合跨包），不是一份手抄清单 ——
+      # 这一轮已经抓到三道守卫栽在手抄清单上。基线只回答"这条有人看过了、结论是什么"。
+      # 绿灯**不能**读成"没有重复的常量"：裸数值那一档实测 5 组只有 1 组是真的，
+      # 所以它只打印不判红，CLI 每一轮都会把这件事打出来（绿的时候也打）。
+      - name: Duplicate-declarations ratchet
+        id: duplicate_declarations
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm check:duplicates
+
       # 「守卫文件不许静默消失」棘轮。
       #
       # ── 事故（今天，两次）──────────────────────────────────────────────────

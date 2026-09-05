@@ -374,7 +374,7 @@ export interface TranscribeReplacedEvent extends SseEventBase {
   oldTranscriptUid: string;
   newTranscriptUid: string;
   updatedSegments: number;
-  /** Segments carrying SEGMENT_FLAG.CONFIRMED — never overwritten, even with no match. */
+  /** Segments carrying SEGMENT_FLAG.HUMAN_CONFIRMED — never overwritten, even with no match. */
   preservedEditedSegments: number;
   canUndo: boolean;
 }
