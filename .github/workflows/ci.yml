@@ -209,6 +209,7 @@ jobs:
       test_ratchet: ${{ steps.test_ratchet.outcome }}
       locale_ratchet: ${{ steps.locale_ratchet.outcome }}
       contract_fields: ${{ steps.contract_fields.outcome }}
+      dependency_audit: ${{ steps.dependency_audit.outcome }}
       ci_scripts_selftest: ${{ steps.ci_scripts_selftest.outcome }}
       test: ${{ steps.test.outcome }}
       mutation_anchors: ${{ steps.mutation_anchors.outcome }}
@@ -417,6 +418,28 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm check:contract-fields
 
+      # ── 依赖来源静态审计（#85 把它接到推送门禁上）─────────────────────────
+      #
+      # 判据：`vendor/manifests/**` 里每一个下载文件都得带 sha256、引用都得钉死。
+      # `[本地实测]` 71 个下载文件、< 1s、**不要网络也不要 build**。
+      #
+      # ── 为什么现在才接 ────────────────────────────────────────────────────
+      #
+      # 它此前**唯一的自动调用方**是 `cold-start-audit.yml`，而那个 workflow
+      # 只能手动触发 —— `[gh run list 实测]` 最后一次运行是 **2026-08-08**。
+      # 而它守的 `vendor/manifests/` 在那之后**改过 5 次**（08-10 ×3、08-24 ×2）。
+      #
+      # 也就是说：脚本在、判据对、地板也有，但**门后一个月没人经过**。
+      # 这与 `check:orphans` 当初那把「造好的锁挂在没人经过的门上」是同一形状，
+      # 只是这次锁挂在供应链上。
+      #
+      # ⚠️ 只接**静态那一半**。`--live`（真发 HTTP + 小文件重算 sha256）留在
+      #    `cold-start-audit.yml` 里：网络抖动不该变成门禁红，那会训练人忽略红灯。
+      - name: Dependency-source audit (下载文件必须有 sha256 + 钉死引用)
+        id: dependency_audit
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: node scripts/ci/dependency-audit.mjs
+
       - name: CI scripts self-test
         id: ci_scripts_selftest
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -488,7 +511,7 @@ jobs:
       - name: 汇总
         env:
           GATE_RESULT: ${{ needs.gate.result }}
-          GATE_STEP_NAMES: format_check,install,build,typecheck,lint,tracked_sources,orphan_exports,test_ratchet,locale_ratchet,contract_fields,ci_scripts_selftest,test,mutation_anchors
+          GATE_STEP_NAMES: format_check,install,build,typecheck,lint,tracked_sources,orphan_exports,test_ratchet,locale_ratchet,contract_fields,dependency_audit,ci_scripts_selftest,test,mutation_anchors
           # ★ 来自**独立 job** 的 result（不再是 gate 的 step outcome）。
           #   job result 与 step outcome 用的是同一套词汇（success/failure/skipped/cancelled），
           #   所以 summarize-gate.mjs 一个字都不用改：失败→「失败」、跳过/取消→「未验证」，
@@ -503,6 +526,7 @@ jobs:
           GATE_STEP_TEST_RATCHET: ${{ needs.gate.outputs.test_ratchet }}
           GATE_STEP_LOCALE_RATCHET: ${{ needs.gate.outputs.locale_ratchet }}
           GATE_STEP_CONTRACT_FIELDS: ${{ needs.gate.outputs.contract_fields }}
+          GATE_STEP_DEPENDENCY_AUDIT: ${{ needs.gate.outputs.dependency_audit }}
           GATE_STEP_CI_SCRIPTS_SELFTEST: ${{ needs.gate.outputs.ci_scripts_selftest }}
           GATE_STEP_TEST: ${{ needs.gate.outputs.test }}
           GATE_STEP_MUTATION_ANCHORS: ${{ needs.gate.outputs.mutation_anchors }}

@@ -20,8 +20,21 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'node:
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { audit, isDark, versionAtLeast, DARK_WORKFLOWS } from './check-workflow-expiry.mjs';
-import { splitChain, parseLink, runAll } from './run-selftests-all.mjs';
+import {
+  audit,
+  isDark,
+  versionAtLeast,
+  DARK_WORKFLOWS,
+  INSTRUMENTS,
+} from './check-workflow-expiry.mjs';
+import {
+  splitChain,
+  parseLink,
+  runAll,
+  auditSelftestCoverage,
+  listSelftestFiles,
+  SELFTEST_FLOOR,
+} from './run-selftests-all.mjs';
 
 let pass = 0;
 let fail = 0;
@@ -226,6 +239,31 @@ section('  ── ★ 过期判定（夹具，不依赖真登记册）');
   }
 }
 
+/*
+ * A11 ★ 仪表登记册：它只保证"名单指得到真东西"，而这一条必须真的会红。
+ *   一份指不到东西的仪表清单，与"这个永远绿的脚本还在被登记着"长得一模一样。
+ */
+{
+  const ghost = [
+    ...INSTRUMENTS,
+    { script: 'scripts/ci/__no_such_instrument__.mjs', workflow: 'x.yml', why: '假的' },
+  ];
+  const { problems } = await audit({ version: '0.7.5', instruments: ghost });
+  redBecause(problems, '__no_such_instrument__', 'A11 ★反向：仪表登记指向不存在的脚本 ⇒ 红');
+
+  const noWhy = [{ script: 'scripts/ci/platform-facts.mjs', workflow: 'x.yml' }];
+  const r2 = await audit({ version: '0.7.5', instruments: noWhy });
+  redBecause(r2.problems, '说不出用途的仪表就是噪音', 'A11b ★反向：仪表没写 why ⇒ 红');
+
+  const { problems: clean } = await audit({ version: '0.7.5' });
+  is(clean.length, 0, 'A11c 阴性对照：真的那份 INSTRUMENTS 全部指得到（否则上面两条不可信）');
+  is(
+    INSTRUMENTS.length > 0,
+    true,
+    `A11d 前提自检：真的登记了 ${INSTRUMENTS.length} 个仪表 —— 空名单不许判绿`,
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════════════
  * B 组 · 链条跑到底，不在第一处红停下
  * ═══════════════════════════════════════════════════════════════════════════════════ */
@@ -337,6 +375,194 @@ is(parseLink('pnpm run x'), null, 'B2d ★ 认不出来就返回 null —— 不
     is(r.results.length, N, 'B6b 且后面 25 环照样跑完了（起不来不许把整条链带走）');
   } finally {
     rmSync(work, { recursive: true, force: true });
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════
+ * C 组 · T-163：`selftest-*` 全集必须 ⊆ `test:ci-scripts`
+ *
+ * ⚠️ 这一组最要紧的是 **C3**：**老实现对同一份夹具必须不红**。
+ * 只证明"新实现会红"是不够的 —— 那条断言在修法被退回去之后还会继续绿着，
+ * 因为它没有区分「新判据抓住了」和「随便什么判据都会抓住」。
+ * C3 是这一组唯一能证明**这次改动真的换来了鉴别力**的那一条。
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+
+section('\x1b[1mC 组 · T-163：selftest-* 全集 ⊆ test:ci-scripts\x1b[0m');
+
+{
+  const { readFileSync } = await import('node:fs');
+  const pkg = JSON.parse(
+    readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'),
+  );
+  const REAL_CHAIN = String(pkg.scripts['test:ci-scripts']);
+  const REAL_FILES = await listSelftestFiles();
+
+  /*
+   * ★ 老实现，逐字照抄改动前的那一版（`lint-workflows.mjs` 的手抄 7 条 + `includes()`）。
+   *   它留在这里**只为一件事**：证明它对下面那几份夹具**不红**。
+   *   一旦有人把修法退回去，C3/C5 会立刻变成"两个实现表现一样"⇒ 红。
+   */
+  const OLD_HAND_LIST = [
+    'selftest-elf-glibc.mjs',
+    'selftest-macho-minos.mjs',
+    'selftest-buildbox.sh',
+    'selftest-build-whisper.sh',
+    'selftest-bundle.mjs',
+    'selftest-workflow-expiry.mjs',
+    'selftest-xplat-ratchet.mjs',
+  ];
+  const oldImpl = (chain) => OLD_HAND_LIST.filter((f) => !String(chain).includes(f));
+
+  /* C0 正向：今天的真链 + 今天磁盘上的真自检 ⇒ 绿。否则下面所有反向都不可信。 */
+  {
+    const r = auditSelftestCoverage({ chain: REAL_CHAIN, selftestFiles: REAL_FILES });
+    is(r.ok, true, `C0 正向：真链 + 真文件集 ⇒ 绿（扫到 ${r.scanned} 个 selftest-*）`);
+    is(
+      r.scanned >= SELFTEST_FLOOR,
+      true,
+      `C0b 前提自检：真的扫到了 ${r.scanned} 个（≥ 地板 ${SELFTEST_FLOOR}）—— 不是空集判绿`,
+    );
+    /*
+     * ★ C0c 这条钉的是**这次改动买到的东西本身**：磁盘上的自检数必须**多于**
+     *   老实现那份手抄名单。两者相等的那天，这次改动就退化成了原样。
+     */
+    is(
+      r.scanned > OLD_HAND_LIST.length,
+      true,
+      `C0c ★ 磁盘上 ${r.scanned} 个自检 > 老实现手抄的 ${OLD_HAND_LIST.length} 个 —— ` +
+        `差的这 ${r.scanned - OLD_HAND_LIST.length} 个正是老门禁看不见的那些`,
+    );
+  }
+
+  /*
+   * ★★ C1–C3 —— 夹具：把**一个老名单里没有的**自检从链里摘掉。
+   *
+   * 选 `selftest-mutation-verdict.mjs`：它不在老名单里，而它守的
+   * `mutation-verdict.mjs` 正是"腿炸了被读成断言有牙齿"那条假绿的判据本体。
+   * 摘掉它，v0.7.3 那条事故就重新没人验了。
+   */
+  const VICTIM = 'selftest-mutation-verdict.mjs';
+  {
+    is(REAL_FILES.includes(VICTIM), true, `C1 前提：${VICTIM} 真的在磁盘上（夹具才有意义）`);
+    const holed = splitChain(REAL_CHAIN)
+      .filter((l) => !l.includes(VICTIM))
+      .join(' && ');
+    is(
+      splitChain(holed).length,
+      splitChain(REAL_CHAIN).length - 1,
+      'C1b 夹具确实只摘掉了一环（没顺手改别的）',
+    );
+
+    const r = auditSelftestCoverage({ chain: holed, selftestFiles: REAL_FILES });
+    is(r.ok, false, `C2 ★★反向：把 ${VICTIM} 从链里摘掉 ⇒ **红**`);
+    redBecause(r.problems, VICTIM, 'C2b 点名了是哪一个自检不见了');
+    redBecause(r.problems, '没被跑到的自检等于不存在', 'C2c 红的那句话说清了为什么这不可接受');
+    is(r.missing.length, 1, 'C2d 只报那一个，不连坐');
+
+    /* ★★★ 抽掉修法：老实现对同一份夹具**不红**。 */
+    is(
+      oldImpl(holed).length,
+      0,
+      `C3 ★★★ **老实现（手抄 7 条 + includes）对同一份夹具一声不吭** —— ` +
+        `这就是这次改动买到的鉴别力；两个实现哪天表现一样了，说明修法被退回去了`,
+    );
+  }
+
+  /* C4 老名单**里**的那些，两个实现都该抓到 —— 证明新实现没有丢掉老的覆盖面。 */
+  {
+    const inOld = 'selftest-bundle.mjs';
+    const holed = splitChain(REAL_CHAIN)
+      .filter((l) => !l.includes(inOld))
+      .join(' && ');
+    is(
+      auditSelftestCoverage({ chain: holed, selftestFiles: REAL_FILES }).ok,
+      false,
+      `C4 新实现照样抓得到老名单里的 ${inOld}（覆盖面只增不减）`,
+    );
+    is(
+      oldImpl(holed).length,
+      1,
+      'C4b 老实现在这一条上也红 —— 阴性对照，说明 C3 的不红不是因为夹具没坏',
+    );
+  }
+
+  /*
+   * ★ C5 —— 名字只作为**参数**出现。
+   *
+   * `cmd.includes(f)` 会被这种链满足，而那一环根本不会被执行。
+   * 老实现在这里**报绿**，新实现按解析出来的脚本名判，照样红。
+   */
+  {
+    const holed =
+      splitChain(REAL_CHAIN)
+        .filter((l) => !l.includes(VICTIM))
+        .join(' && ') + ` && node scripts/ci/summarize-gate.mjs --baseline ${VICTIM}`;
+    const r = auditSelftestCoverage({ chain: holed, selftestFiles: REAL_FILES });
+    is(r.ok, false, `C5 ★ ${VICTIM} 只作为**参数**出现（那一环跑的是别的脚本）⇒ 仍然红`);
+    redBecause(r.problems, VICTIM, 'C5b 仍然点名了它');
+    /*
+     * 这一条用老名单里的那个来演，因为老实现只看它名单里的 7 个。
+     * 形状是同一个：把 `selftest-bundle.mjs` 从链里摘掉、只留在某一环的参数位上。
+     */
+    const bundleAsArg =
+      splitChain(REAL_CHAIN)
+        .filter((l) => !l.includes('selftest-bundle.mjs'))
+        .join(' && ') + ' && node scripts/ci/summarize-gate.mjs --baseline selftest-bundle.mjs';
+    is(
+      oldImpl(bundleAsArg).length,
+      0,
+      'C5c ★★ 老实现被一个**参数**骗过去了（子串匹配的必然结局）——' +
+        ' 新实现按 parseLink() 取的是真正会被执行的那个脚本',
+    );
+    is(
+      auditSelftestCoverage({ chain: bundleAsArg, selftestFiles: REAL_FILES }).ok,
+      false,
+      'C5d 同一份夹具上新实现红 —— 与 C5c 逐条对照',
+    );
+  }
+
+  /*
+   * ★★ C6 —— 空转防线：扫描器坏了（扫出 0 个 / 太少）时**必须红**，
+   *   而且红的理由要说的是"扫描坏了"，不是"全都接上了"。
+   *   一个扫不到东西的扫描器，`[].every()` 恒真 ⇒ 永远绿 ⇒ 比没有门更坏。
+   */
+  {
+    const zero = auditSelftestCoverage({ chain: REAL_CHAIN, selftestFiles: [] });
+    is(zero.ok, false, 'C6 ★★反向：一个 selftest-* 都没扫到 ⇒ 红（空集不许判绿）');
+    redBecause(zero.problems, '扫描器坏了', 'C6b 红的那句话第一读法是"扫描坏了"');
+    redBecause(zero.problems, '不比对', 'C6c 且明说这一轮不拿它跟链比对');
+    is(zero.missing.length, 0, 'C6d 不许同时报"这些自检没接链" —— 那会指挥人去改一份没坏的链');
+
+    const few = auditSelftestCoverage({
+      chain: REAL_CHAIN,
+      selftestFiles: REAL_FILES.slice(0, SELFTEST_FLOOR - 1),
+    });
+    is(few.ok, false, `C6e ★ 只扫到 ${SELFTEST_FLOOR - 1} 个（地板 ${SELFTEST_FLOOR}）⇒ 也红`);
+
+    const atFloor = auditSelftestCoverage({
+      chain: REAL_CHAIN,
+      selftestFiles: REAL_FILES.slice(0, SELFTEST_FLOOR),
+    });
+    is(atFloor.ok, true, `C6f 阴性对照：正好 ${SELFTEST_FLOOR} 个 ⇒ 绿（地板不是焊死在红上的）`);
+  }
+
+  /* C7 磁盘扫描器本身：真的从 scripts/ci/ 认出了 .mjs 和 .sh 两种形状。 */
+  {
+    is(
+      REAL_FILES.every((f) => f.startsWith('selftest-')),
+      true,
+      'C7 扫出来的每一个都以 selftest- 开头（没有把别的脚本卷进来）',
+    );
+    is(
+      REAL_FILES.some((f) => f.endsWith('.sh')),
+      true,
+      'C7b ★ 认得 .sh（两个 bash 自检就是靠这一条不被漏掉）',
+    );
+    is(
+      REAL_FILES.some((f) => f.endsWith('.mjs')),
+      true,
+      'C7c 认得 .mjs',
+    );
   }
 }
 
