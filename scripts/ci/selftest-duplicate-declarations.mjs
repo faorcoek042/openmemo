@@ -31,13 +31,17 @@
  *    这条同时是**扫描器失明的报警器**：探针瞎了的表现正是"基线大面积过期"，
  *    而那看起来像好消息。
  *
+ * ⑦ **①的另一个面** —— 前六节钉的是**判据**不空转，§7 钉的是 **CLI 主体真的被执行**。
+ *    这两件事可以分开坏：入口守卫失配时不报错，而是 stdout 零行、**exit 0**、CI 记 ✔。
+ *    实测就是这么坏的（win32 上整道门空转，见 §7 的文件内注）。
+ *
  * 跑：`node scripts/ci/selftest-duplicate-declarations.mjs`（`pnpm test:ci-scripts` 会调）
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { collect, isAliasOfImport, scanFile } from './check-duplicate-declarations.mjs';
 import { stripCommentsOnly } from '../lib/ts-lexer.mjs';
@@ -52,11 +56,16 @@ const SCRIPT = resolve(REPO, 'scripts/ci/check-duplicate-declarations.mjs');
  * 解析成一个不存在的模块，进程当场崩，而崩出来的 stdout 恰好也**不含**我们要断言的那段字符串。
  * 也就是说：**"没打印"和"根本没跑起来"长得一模一样**，而前者正是变异腿想证明的东西。
  * `[实测]` 第一版就栽在这里，两条腿一起假绿。所以每次 spawn 都顺带断言"它真的跑起来了"。
+ *
+ * ⚠️⚠️ 而"换成绝对路径"必须走 `pathToFileURL().href`，**不许把裸路径塞进 import**。
+ * 这是 T-145（`scripts/selfcheck.mjs`）那个坑的**同一族**：Windows 上 `D:\a\…` 会被
+ * ESM loader 当成 URL scheme —— `ERR_UNSUPPORTED_ESM_URL_SCHEME … Received protocol 'd:'`，
+ * 于是本文件里所有起副本的腿在 win32 上**一条都跑不起来**（首次三平台实跑 run 33998491941 抓到）。
  */
 function mutatedCopy(dir, ...edits) {
   let src = readFileSync(SCRIPT, 'utf8').replace(
     "from '../lib/ts-lexer.mjs'",
-    `from ${JSON.stringify(resolve(REPO, 'scripts/lib/ts-lexer.mjs'))}`,
+    `from ${JSON.stringify(pathToFileURL(resolve(REPO, 'scripts/lib/ts-lexer.mjs')).href)}`,
   );
   for (const [from, to] of edits) {
     assert(
@@ -464,6 +473,99 @@ console.log('\n§6 基线只准变短（这同时是"扫描器失明"的报警�
     );
     const g = r.dupNames.find((x) => x.key === 'name:K');
     assert(g && g.sites.length === 3, `三份应当汇成一组三个 site，实际 ${JSON.stringify(g)}`);
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   §7 入口守卫：这道门**必须真的跑**，而不是静默 exit 0
+   ══════════════════════════════════════════════════════════════════ */
+
+/**
+ * ★ 这一组是①「空转」的另一个面：前六节钉的是**判据**不空转，这一节钉的是
+ * **CLI 主体真的被执行**。两者是可以分开坏的 —— 而且真的分开坏过。
+ *
+ * `check-duplicate-declarations.mjs` 的入口守卫原来是手拼 URL
+ * （`import.meta.url === \`file://${process.argv[1]}\``）。失配时它不报错，
+ * 而是 **CLI 主体一行不执行 → stdout 零行 → exit 0 → CI 记 ✔**。
+ * 实测（run 33998491941，这两个脚本首次上三平台）：
+ *
+ *   · **win32**：整个 `check-duplicate-declarations.mjs` 是**空转的**，
+ *     `[36/41]` 那一格在日志里一行输出都没有，却记了 ✔。
+ *   · **darwin**：真仓库路径没有软链，所以真 CLI 是好的；但自检从
+ *     `mkdtemp()` 起的副本落在 `/var/folders/…`，而 macOS 的 `/var` 是
+ *     通往 `/private/var` 的软链 ⇒ `argv[1]` 与 realpath 过的 `import.meta.url`
+ *     天生不同 ⇒ 副本也空转，**stderr 全空**（因为它根本没崩，只是什么都没做）。
+ *
+ * ⚠️ 所以这三条腿是**在 Linux 上就会红**的：判据不依赖跑在哪个平台，
+ * 只依赖"入口路径与 realpath 后的路径不同"这件事 —— 软链和空格 Linux 上都造得出来。
+ * **把 `isDirectRun()` 退回成手拼写法，①②两条当场红。**（这就是这组存在的判据。）
+ */
+console.log('\n§7 入口守卫：CLI 必须真的跑起来，不许静默 exit 0');
+{
+  /** 起一份副本、从 `entry` 这条路径去跑它，回答"CLI 主体到底执行了没有"。 */
+  const runFrom = (entry, cwd = REPO) =>
+    spawnSync(process.execPath, [entry], { cwd, encoding: 'utf8' });
+
+  const ranMarker = /扫描 \d+ 个源文件/;
+
+  check('① 路径里有空格 / 中文 / `#` → 守卫必须仍然认出"这是直接执行"', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dupdecl-entry-'));
+    try {
+      // 手拼 `file://` + 路径在这三种字符上各自失配（URL 要百分号编码，路径不要）。
+      const odd = join(dir, 'a b#c 笔记');
+      mkdirSync(odd);
+      const r = runFrom(mutatedCopy(odd));
+      assert(
+        ranMarker.test(r.stdout),
+        '装在含空格 / 中文 / `#` 的目录下时，CLI 主体一行都没执行 —— ' +
+          `而它**退出码是 ${r.status}**，CI 会把这个记成 ✔。\n` +
+          `stdout(${r.stdout.length} 字节): ${r.stdout.slice(0, 200)}\n` +
+          `stderr: ${r.stderr.slice(0, 300)}`,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  check('② 经由软链调用（= macOS 的 `/var → /private/var`）→ 必须再比一次 realpath', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dupdecl-link-'));
+    try {
+      const real = join(dir, 'real');
+      mkdirSync(real);
+      mutatedCopy(real);
+      // 'junction' 让这条腿在 Windows 上**也**造得出来（普通目录软链要提权，junction 不要）。
+      symlinkSync(real, join(dir, 'link'), 'junction');
+      const r = runFrom(join(dir, 'link', 'check.mjs'));
+      assert(
+        ranMarker.test(r.stdout),
+        '经由软链调用时 CLI 主体一行都没执行 —— 这正是 macOS 上那一下：' +
+          `\`import.meta.url\` 是 realpath 过的，\`argv[1]\` 不是。退出码 ${r.status}，` +
+          `stdout ${r.stdout.length} 字节、stderr ${r.stderr.length} 字节（**两边都空**才是这个坑的样子）。`,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  check('★ 反向：被 `import` 时**不许**自己跑起来（守卫不能改成永远为真）', () => {
+    // ①②只钉"该跑的时候跑"。只有这一条能挡住"把守卫删了/写成 true"这种修法 ——
+    // 那样 §1–§6 全绿，而这个模块会在每次被 import 时顺手扫一遍整个仓库。
+    const dir = mkdtempSync(join(tmpdir(), 'dupdecl-import-'));
+    try {
+      const p = join(dir, 'importer.mjs');
+      writeFileSync(
+        p,
+        `import ${JSON.stringify(pathToFileURL(SCRIPT).href)};\nconsole.log('IMPORTED-OK');\n`,
+      );
+      const r = runFrom(p);
+      assert(/IMPORTED-OK/.test(r.stdout), `import 本身就失败了：${r.stderr.slice(0, 300)}`);
+      assert(
+        !ranMarker.test(r.stdout),
+        '被 import 时 CLI 主体也跑了 —— 守卫等于没有（§1–§6 照样全绿，但它已经不设防了）',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 }
 
