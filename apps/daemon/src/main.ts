@@ -862,7 +862,13 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
     if (bodyText.error) {
       // 失败只是"搜索结果可能不全"，不是"库坏了" —— 但**必须说出来**
       console.warn(`[daemon] ⚠️  正文投影回填失败（不影响启动）：${bodyText.error}`);
-    } else if (bodyText.ran) {
+    } else if (bodyText.ran && bodyText.scanned > 0) {
+      /*
+       * `scanned > 0` 才打：一个刚建的空库（新装、每一次跑测试）会走到这里，
+       * 而"扫描 0 条、更新 0 条"没有任何信息量，只会训练人忽略这一行日志。
+       * ⚠️ 被这条门槛挡掉的**只有"根本没有可扫的东西"**这一种；
+       * 扫到了但一条都不用改（`updated=0`）仍然会打出来 —— 那句话有信息量。
+       */
       console.log(
         `[daemon] 正文投影回填：扫描 ${bodyText.scanned} 条、更新 ${bodyText.updated} 条` +
           `（${bodyText.ms}ms，指纹 ${bodyText.fingerprint}）`,
