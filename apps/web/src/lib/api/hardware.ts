@@ -20,11 +20,25 @@ import { qk, STALE_TIME_OVERRIDES } from '../../app/query';
  *  "多探一次"不是小事，这也是必须共用而不是各写一份的原因。）
  *
  * `staleTime` 放宽到 5 分钟（`app/query.ts` 的约定）。
+ *
+ * ## ★ `'runtime'` 这个 surface 实参不是装饰
+ *
+ * 它原本是裸的 `api('/runtime/hardware')` ⇒ 落进 `'generic'`。而 `'generic'` 按
+ * `lib/api/surfaces.ts` 的定义是「**未声明 surface** 的调用落点，不计入统计」——
+ * 于是 `/api/runtime/*` 这一整个面**结构上永远停在 `'unknown'`**：
+ * 没有任何 `markSurface('runtime', …)`、也没有任何 `api('runtime', …)` 能改写它。
+ *
+ * 直接后果是引导页第二步（"看看你的硬件"）那句
+ * `<MockNotice surface="runtime" />` **永远渲染不出来**：daemon 没起、或这个端点还没实现时，
+ * 用户在那一步看到的是一片什么都不说的界面，而产品原本承诺在这里告诉他"这块是假的"。
+ *
+ * ⚠️ 现在由 `lib/api/queryAndSurface.test.ts` 钉住：界面上用 `<MockNotice surface=X>`
+ * 承诺要报告的每一个面，仓里必须真的存在能写它的调用点。
  */
 export function useHardwareQuery() {
   return useQuery({
     queryKey: qk.runtime.hardware,
-    queryFn: () => api<GetHardwareResponse>('/runtime/hardware'),
+    queryFn: () => api<GetHardwareResponse>('runtime', '/runtime/hardware'),
     staleTime: STALE_TIME_OVERRIDES.hardware,
   });
 }

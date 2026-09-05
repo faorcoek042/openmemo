@@ -12,12 +12,14 @@
 
 import type { QueryClient } from '@tanstack/react-query';
 import type {
+  MediaAssetReadyEvent,
   MediaReadyEvent,
   NoteCreatedEvent,
   NoteDeletedEvent,
   NoteUpdatedEvent,
   TranscribeDoneEvent,
   TranscribePartialEvent,
+  TranscribeReplacedEvent,
   TranscribeSegmentEvent,
   TranscribeStartedEvent,
 } from '@openmemo/shared';
@@ -26,12 +28,7 @@ import { bus } from '../../lib/events/bus';
 import { qk } from '../../app/query';
 import type { SseBinding } from '../../lib/events/bindings';
 import type { TranscriptDto } from '../../lib/api/types';
-import type {
-  TranscriptSegmentDto,
-  XMediaAssetReadyEvent,
-  XSummaryDeltaEvent,
-  XTranscribeReplacedEvent,
-} from '../../lib/events/types';
+import type { TranscriptSegmentDto, XSummaryDeltaEvent } from '../../lib/events/types';
 
 /**
  * ✅ 两处适配已随契约更新删除（ADR-013 决策 2 / 决策 4）：
@@ -76,8 +73,16 @@ export const notesSse: SseBinding = (qc: QueryClient) => [
     void qc.invalidateQueries({ queryKey: qk.notes.detail(e.noteUid) });
   }),
 
-  /** 扩展事件：单个产物（尤其是波形 peaks）就绪 —— 就绪前去拉会 404。 */
-  bus.on('x.media.asset.ready', (e: XMediaAssetReadyEvent) => {
+  /**
+   * 单个产物（尤其是波形 peaks）就绪 —— 就绪前去拉会 404。
+   *
+   * ★ 这里原来订的是 **`x.media.asset.ready`**，而 daemon（`media/peaksAsset.ts`）
+   * 与 mock 源（`lib/api/mock.ts`）发的一直是 **`media.asset.ready`**（shared 的正版，
+   * 且 `SseHub.publish(event: SseEvent)` 在类型上就发不出 `x.*`）。
+   * 差一个前缀 ⇒ **这条 invalidate 从来没有被触发过**，用户得手动刷新才看得到波形。
+   * 见 `lib/events/types.ts` 里那段说明与 `sseNaming.test.ts` 的守卫。
+   */
+  bus.on('media.asset.ready', (e: MediaAssetReadyEvent) => {
     void qc.invalidateQueries({ queryKey: qk.notes.detail(e.noteUid) });
   }),
 
@@ -127,10 +132,17 @@ export const notesSse: SseBinding = (qc: QueryClient) => [
   }),
 
   /**
-   * 扩展事件：F3 两阶段覆盖完成。UI 据此渲染
+   * F3 两阶段覆盖完成。UI 据此渲染
    * 「已更新 47 段 · 你编辑过的 3 段已保留 · [撤销]」。
+   *
+   * ★ 与上面 `media.asset.ready` 同一处订正：原来订的是 `x.transcribe.replaced`，
+   * 而 shared 早就把它转正成 `transcribe.replaced` 了。
+   *
+   * ⚠️ **诚实标注**：这一条与波形那条不同 —— `[实测]` 全仓**今天还没有任何生产方**
+   * （daemon 侧 `makeEvent('transcribe.replaced')` 零命中），所以订对了名字它也还不会响。
+   * 改的是"等生产方接上那天它自动就通"，**不是"现在就通了"**。
    */
-  bus.on('x.transcribe.replaced', (e: XTranscribeReplacedEvent) => {
+  bus.on('transcribe.replaced', (e: TranscribeReplacedEvent) => {
     void qc.invalidateQueries({ queryKey: qk.transcript(e.noteUid) });
   }),
 

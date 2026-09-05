@@ -3,10 +3,8 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Copy, FolderOpen, HardDrive, Loader2 } from 'lucide-react';
 
-import type { GetStorageResponse } from '@openmemo/shared';
-
 import { api, ApiError } from '../../lib/api/client';
-import { qk } from '../../app/query';
+import { useModelsStorageQuery } from '../../lib/api/models';
 import { Button } from '../../components/common/Button';
 import { Emphasis } from '../../components/common/Emphasis';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
@@ -227,11 +225,15 @@ export function DataLocationSection() {
     staleTime: 60_000,
   });
 
-  const storage = useQuery({
-    queryKey: qk.models.storage,
-    queryFn: () => api<GetStorageResponse>('models', '/models/storage'),
-    staleTime: 30_000,
-  });
+  /*
+   * ★ 收敛：这里原来自己写了一条 `useQuery` —— 与 `features/models/api.ts` 那条
+   *   共用 `qk.models.storage`，但一个带 `'models'` surface、一个是裸的（⇒ `'generic'`），
+   *   `staleTime` 也一个 30s 一个 0。react-query 只跑先挂载的那份，
+   *   于是"哪个 API 面被标成已接通"取决于用户先开设置页还是先开模型页。
+   *   实现现在唯一地住在 `lib/api/models.ts`（`features/` 之间不许互相 import，
+   *   所以共享的那份必须在 `lib/`）。
+   */
+  const storage = useModelsStorageQuery();
 
   const layout = useQuery({
     queryKey: ['settings', 'data-dir'] as const,

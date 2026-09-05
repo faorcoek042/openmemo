@@ -1,11 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router';
 import { Cpu, Download } from 'lucide-react';
 
-import type { GetInstalledResponse, InstalledModel } from '@openmemo/shared';
+import type { InstalledModel } from '@openmemo/shared';
 
 import { api } from '../../lib/api/client';
+import { useModelsInstalledQuery } from '../../lib/api/models';
 import { qk } from '../../app/query';
 import { arr } from '../../lib/safe';
 import { Button } from './Button';
@@ -104,17 +105,18 @@ function groupByFamily(models: InstalledModel[]): [string, InstalledModel[]][] {
  * 这类"**UI 说出一个它没核对过的具体名字**"和 `MINDMAP_SAVE_SUPPORTED`、
  * `showModel={false}` 同族：**写的时候是对的，环境一变就成了谎**。
  * 修法同样不是改个更准的常量，而是**让它没有常量可写** —— 名字只能从后端来。
+ *
+ * ⚠️ 这里原来自己写着一条 `useQuery`（连同下面 `AsrModelPicker` 里那条，
+ * 加上 `features/models/api.ts` 那条，**同一个 `qk.models.installed` 上共三份**，
+ * 两种 `queryFn`）。现在统一走 `lib/api/models.ts` 的那一份 ——
+ * 为什么这不是整洁问题、而是一个会让顶栏数字随点击顺序变的真缺陷，写在那个文件头部。
+ * 顺带：本地私设的 `staleTime: 30_000` 也随之取消，回到全局默认 0（同上）。
  */
 export function useActiveAsrModel(
   /** 关掉时不发请求。见 `useAsrEngines` 里同名参数的理由（折叠面板里的调用方）。 */
   enabled = true,
 ): { id: string | null; displayName: string | null } {
-  const { data } = useQuery({
-    queryKey: qk.models.installed,
-    enabled,
-    queryFn: () => api<GetInstalledResponse>('models', '/models/installed'),
-    staleTime: 30_000,
-  });
+  const { data } = useModelsInstalledQuery(enabled);
   const id = data?.active?.asr ?? null;
   const m = arr(data?.models).find((x) => x.id === id);
   // 拿不到就回 null，由调用点决定"说什么都不说" —— 绝不回退到某个猜的名字
@@ -127,10 +129,7 @@ export function AsrModelPicker({ className }: { className?: string }) {
   const location = useLocation();
   const qc = useQueryClient();
 
-  const { data, isLoading } = useQuery({
-    queryKey: qk.models.installed,
-    queryFn: () => api<GetInstalledResponse>('models', '/models/installed'),
-  });
+  const { data, isLoading } = useModelsInstalledQuery();
 
   const activate = useMutation({
     mutationFn: (id: string) =>

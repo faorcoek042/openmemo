@@ -189,9 +189,7 @@
       "verifyingChip": "校验中",
       "retry": "重试",
       "cancel": "取消",
-      "progressLabel": "{{name}} 下载进度",
-      "etaUnderMinute": "剩余不到 1 分钟",
-      "etaMinutes": "剩余约 {{minutes}} 分钟"
+      "progressLabel": "{{name}} 下载进度"
     },
     "quant": {
       "current": "量化 {{quant}}",

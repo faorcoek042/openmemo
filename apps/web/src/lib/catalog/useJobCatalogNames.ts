@@ -16,17 +16,18 @@
  *
  * 消费方之一是 `components/common/JobToaster.tsx`，而 eslint（D-05 §3.5,
  * `eslint.config.js:82-99`）禁止 `lib/` 与 `components/` 依赖 `features/`，
- * 所以不能去 import `features/runtime/api` 里那个 `useBackendsCatalogQuery`。
+ * 所以不能去 import `features/runtime/api` 里那份实现。
  * 与 `useModelCatalogNames` 同样的解法：把"读目录"降到 `lib/`，
  * query key 仍用 `app/query` 里那个**同一个** `qk.backends.catalog`，
  * 于是与 `features/runtime` 共享缓存与失效，不会多打一份数据。
+ *
+ * ★ 订正：降到 `lib/` 是对的，**在这里再抄一条 `useQuery` 是错的**。
+ * 现在 `useBackendsCatalogQuery` 的实现就住在 `lib/api/backends.ts`（唯一一份），
+ * `features/runtime/api.ts` 再导出它，本文件直接用它 —— 三方同一份定义。
+ * 原来的两份只在 `staleTime` 的写法上不同、今天恰好等值，理由见那个文件的头部。
  */
 
-import { useQuery } from '@tanstack/react-query';
-import type { GetBackendCatalogResponse } from '@openmemo/shared';
-
-import { qk } from '../../app/query';
-import { api } from '../api/client';
+import { useBackendsCatalogQuery } from '../api/backends';
 import type { CatalogLookup, CatalogLookups, LocalizableEntry } from '../format/jobName';
 import { useModelCatalogNames } from './useModelCatalogNames';
 
@@ -42,11 +43,7 @@ import { useModelCatalogNames } from './useModelCatalogNames';
  * 一定在这份目录里** —— 这一份查表把三个入口一起覆盖掉。
  */
 function useBackendCatalogNames(): CatalogLookup {
-  const { data } = useQuery({
-    queryKey: qk.backends.catalog,
-    queryFn: () => api<GetBackendCatalogResponse>('/backends/catalog'),
-    staleTime: 60_000,
-  });
+  const { data } = useBackendsCatalogQuery();
 
   return (targetId: string): LocalizableEntry | null =>
     data?.packs?.find((p) => p.id === targetId) ?? null;
