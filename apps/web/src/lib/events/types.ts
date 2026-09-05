@@ -209,9 +209,17 @@ export interface TranscriptSegmentDto {
   textRaw: string | null;
 }
 
-export const SEGMENT_FLAG = {
-  HALLUCINATION: 1 << 0,
-  LOW_CONFIDENCE: 1 << 1,
-  CONFIRMED: 1 << 2,
-  SILENCE: 1 << 3,
-} as const;
+/*
+ * ★ `transcript_segments.flags` 的位域 —— **就是契约那一份**（`@openmemo/shared`）。
+ *
+ * 这里原来是第三份手写件（shared / pipeline / 这里各一份）。位值今天对得上**靠的是
+ * 纪律不是机制**，而位错了的后果和别的分叉不是一个量级：**它是静默的，而且会污染
+ * 已存数据** —— 写进库的是数字，读出来是另一个含义，历史行没有任何办法回溯纠正。
+ *
+ * ⚠️ 三份里**四个位有三个名字不同**（`HALLUCINATION`↔`SUSPECT_REPETITION`、
+ *   `CONFIRMED`↔`HUMAN_CONFIRMED`、`SILENCE`↔`SILENCE_OR_MUSIC`），所以收敛它
+ *   **不是删掉再 import** —— 本包 3 处读取跟着改了名。名字用的是离写入点最近的那一套
+ *   （写入点在 pipeline 的 `whisperCpp.ts` / `whisperServer.ts` / `merge.ts`），
+ *   判据（「哪个名字在它被写入时是可断言的」）与逐位对照表写在 shared 那份声明上。
+ */
+export { SEGMENT_FLAG } from '@openmemo/shared';

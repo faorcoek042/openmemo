@@ -11,6 +11,8 @@
  * **`baseUrl` 对所有 provider 都可配；`apiKey` 对本地后端可为空。**
  */
 
+import type { LlmPurpose } from '@openmemo/shared';
+
 import type { LlmError } from './errors.js';
 
 export type ChatRole = 'system' | 'user' | 'assistant';
@@ -26,28 +28,32 @@ export interface JsonSchemaSpec {
   readonly strict?: boolean;
 }
 
-/**
- * 用途标识 —— **每个用途可以配一套独立的 provider + 模型**。
+/*
+ * ★ 用途分档 —— **权威定义在 `@openmemo/shared`**，这里只是再导出（调用方一个字不用改）。
  *
- * 分档依据是 `memo-compare` 对 memo.ac 的取证：那边是
- * **chat / 摘要+导图 / 翻译 各配一套**，而不是全局一个模型。
- * 这个分法有实际理由：翻译要的是便宜快速的小模型，导图要的是能稳定吐结构化 JSON 的，
- * 对话要的是上下文长的 —— 强行共用一个，用户只能按最贵的那个需求配，然后为翻译多花十倍钱。
+ * ## 为什么方向是 llm → shared，而不是反过来
  *
- * `summarize` **同时覆盖摘要与思维导图**（与 memo.ac 一致）：两者都是"读全文吐结构"，
- * 对模型能力的要求是同一类，拆开只会让设置页多一栏没人知道怎么填的东西。
+ * 这四个东西原来在这里与 `packages/shared/src/llm.ts` **逐字相同各写一份**，
+ * 而 shared 那份的文件头写着它为什么非在 shared 不可：`@openmemo/llm` 的 `.` 导出指向
+ * `dist/index.js`，会连带把 provider 与 `secrets.ts` 一起拉进来，而 `secrets.ts` 里的
+ * `chmodSync` 被打进浏览器 bundle **正是那次「开发服务器下笔记详情页整页崩溃」**。
+ * 前端够不着这里，所以权威只能落在 shared；而本包**早就声明了 `@openmemo/shared` 依赖**
+ * （源码里却一次 import 都没有），没有任何"引不到"的借口。
+ *
+ * shared 那份当时留了一句待办，写的正是这一步，并附了一句
+ * 「在那之前**取值必须与该文件逐字一致** —— 已核对（2026-08，三值相同）」——
+ * **「靠人逐字核对」正是本轮要拆掉的那个东西**：核对过一次不等于下一次还会有人核对。
+ *
+ * 分档依据（memo-compare 取证：chat / 摘要+导图 / 翻译 各配一套）、
+ * `summarize` 为什么同时覆盖摘要与导图、`PurposeBinding` 为什么必须**逐字段**回退，
+ * 都写在 `packages/shared/src/llm.ts` 的那几份声明上。
  */
-export const LLM_PURPOSES = ['chat', 'summarize', 'translate'] as const;
-export type LlmPurpose = (typeof LLM_PURPOSES)[number];
-
-/** 设置页每一栏的形状。任一为空 = 该用途回退到默认配置。 */
-export interface PurposeBinding {
-  readonly providerId?: string;
-  readonly model?: string;
-}
-
-/** `llm.purposes` 设置键的形状。缺项一律回退到 `llm.defaultProviderId/ModelId`。 */
-export type PurposeBindings = Partial<Record<LlmPurpose, PurposeBinding>>;
+export {
+  LLM_PURPOSES,
+  type LlmPurpose,
+  type PurposeBinding,
+  type PurposeBindings,
+} from '@openmemo/shared';
 
 export interface ChatRequest {
   /**

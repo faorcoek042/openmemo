@@ -187,11 +187,6 @@
       "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
     },
     {
-      "file": "packages/shared/src/breaker.ts",
-      "name": "BreakerVerdict",
-      "note": "★ T-183 新可见（不是新产生）：与 `packages/runtime/src/probe/runProbe.ts:387` 同名同定义，而**真实消费方（daemon setup.ts）走的是 runtime 那份**。旧口径的裸名正则把 runtime 那份的引用算给了 shared 这份，于是它一直隐身。⚠️ 未处置：两份该合并成哪一份是重复实现的口径问题（house rule：正解是让人用回权威那份，不是删掉），不属本轮范围。"
-    },
-    {
       "file": "packages/shared/src/events.ts",
       "name": "PROGRESS_THROTTLE_HZ",
       "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
@@ -270,11 +265,6 @@
       "file": "packages/shared/src/notes.ts",
       "name": "ProbeResult",
       "note": "★ T-183 新可见（不是新产生）：全仓有 4 个同名 `ProbeResult`（web types.ts / pipeline audio/ffmpeg.ts / runtime types.ts / 这里），而且**说的不是同一件事** —— 这里是媒体探测（title/author/durationMs），runtime 那个是硬件探测。旧口径的裸名正则让四者互相计为引用，这一份的零消费方因而隐身。⚠️ 未处置：重名不同义该怎么改名是跨包命名问题，不属本轮范围。"
-    },
-    {
-      "file": "packages/shared/src/notes.ts",
-      "name": "SEGMENT_FLAG",
-      "note": "★ T-183 新可见（不是新产生）：与 `apps/web/src/lib/events/types.ts:227` 和 `packages/pipeline/src/asr/types.ts` 三份同名。**两个真实消费方各自用的是自己包里那份**（web 的 SegmentRow/mock 用 web 那份，pipeline 的 whisperServer 用 pipeline 那份），shared 这份零消费方。旧口径把那些引用算给了它。⚠️ 未处置：三份位域常量本该只有一份（D-02 定义的是同一个 bitfield），合并是一次独立改动。"
     },
     {
       "file": "packages/shared/src/notes.ts",

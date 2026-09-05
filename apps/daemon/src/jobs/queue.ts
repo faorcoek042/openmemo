@@ -8,12 +8,22 @@
  * 队列**完全持久化在 SQLite**，不做内存队列 + 定期落盘（那在崩溃时必丢）。
  */
 import type { DatabaseHandle } from '@openmemo/db';
-import { ulid } from '@openmemo/shared';
+import { ulid, type JobState } from '@openmemo/shared';
 
 import type { Lane } from './lanes.js';
 
-export type JobState =
-  'queued' | 'blocked' | 'leased' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
+/*
+ * ★ `JobState` **就是 `@openmemo/shared` 的那一份**（由 `JOB_STATES` 派生，D-02 §1.7）。
+ *
+ * 这里原来是**手抄的同 8 态联合**。它不是"抄了但一致所以没事"—— 同一个 daemon 里
+ * `jobs/events.ts` 与 `http/rest/state.ts` 用的**已经是 shared 那份**，只有本文件用自己那份。
+ * 也就是说这个类型在一个进程里同时有两个来源，而它们靠"今天恰好逐字相同"互相冒充。
+ * shared 那份还带着 `TERMINAL_JOB_STATES` 与 `JOB_TRANSITIONS`（状态机），
+ * 手抄件享受不到 —— 加一个状态时，穷尽 switch 会在 shared 那边报，在这边不会。
+ *
+ * 再导出保留：`apps/daemon/src/index.ts` 与本包内多处按 `./jobs/queue.js` 取它。
+ */
+export type { JobState };
 
 export interface JobRow {
   id: number;

@@ -18,34 +18,32 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import type { DatabaseHandle } from '@openmemo/db';
+import type { MaskedSecret, SecretsDisclosure } from '@openmemo/shared';
 
 import { Repos } from '../../db/repos.js';
 import { readJsonBody, sendError, sendJson } from '../respond.js';
 
-/** 与 `packages/llm` 的 `MaskedSecret` 结构兼容（`enc` 在那边是字面量联合，可赋给 string）。 */
-export interface MaskedSecretLike {
-  readonly key: string;
-  readonly masked: string;
-  readonly enc: string;
-  readonly updatedAt: number;
-}
-
-/** 与 `packages/llm` 的 `SecretsDisclosure` 结构兼容。 */
-export interface SecretsDisclosureLike {
-  readonly storage: string;
-  readonly path: string;
-  readonly filePermission: string;
-  readonly dirPermission: string;
-  readonly messageZh: string;
-  readonly message: string;
-}
+/*
+ * ★ 这里原来是两个**手写的"结构兼容"影子**（`MaskedSecretLike` / `SecretsDisclosureLike`），
+ *   现在直接就是契约本身（`@openmemo/shared`）。
+ *
+ *   ⚠️ **解耦的意图是对的、形状是错的。** 上面文件头说得没错：路由层不该
+ *   `import { SecretStore } from '@openmemo/llm'`（那会把 `chmodSync` 拖进依赖图）。
+ *   但正确的解耦是**两边都指向同一个契约**，而不是各写一个"兼容"的影子 ——
+ *   影子当时把 `storage: 'plaintext-file'` 与 `enc: SecretEncoding` **双双放宽成了
+ *   `string`**，注释里还写着"（可赋给 string）"当理由。放宽之后编译器就再也拦不住
+ *   「这里发了一个谁也不认识的值」，而那正是它唯一能帮上忙的地方。
+ *   指向 shared 既保住了解耦（shared 是纯类型、无 I/O、daemon 早就依赖它），
+ *   又把那两格收窄回去。`SecretStoreLike` 的结构化注入照旧。
+ */
+export type { MaskedSecret, SecretsDisclosure };
 
 /** `packages/llm` 的 `SecretStore` 满足此接口。**刻意不含 `get()`** —— 路由层无权读明文。 */
 export interface SecretStoreLike {
   set(key: string, value: string): void;
   delete(key: string): void;
-  list(): readonly MaskedSecretLike[];
-  disclosure(): SecretsDisclosureLike;
+  list(): readonly MaskedSecret[];
+  disclosure(): SecretsDisclosure;
 }
 
 export interface SettingsRoutesDeps {
@@ -285,12 +283,13 @@ function readSettings(repos: Repos): Record<string, unknown> {
   return out;
 }
 
-function toMasked(s: MaskedSecretLike): {
-  key: string;
-  masked: string;
-  enc: string;
-  updatedAt: number;
-} {
+/**
+ * 只挑掩码形状里该发的四格出去。
+ *
+ * ⚠️ 返回类型是 `MaskedSecret` 本身（原来是一个手写的、`enc` 放宽成 `string` 的
+ * 匿名结构）—— 这样"多发了一个字段"或"少发了一个字段"都是**编译期**错误。
+ */
+function toMasked(s: MaskedSecret): MaskedSecret {
   return { key: s.key, masked: s.masked, enc: s.enc, updatedAt: s.updatedAt };
 }
 

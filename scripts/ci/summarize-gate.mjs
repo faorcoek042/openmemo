@@ -94,6 +94,7 @@ export const STEP_LABELS = {
   lint: 'Lint',
   tracked_sources: 'Tracked-sources guard',
   orphan_exports: 'Orphan-exports ratchet',
+  duplicate_declarations: 'Duplicate-declarations ratchet',
   test_ratchet: 'Test-file ratchet',
   locale_ratchet: 'Locale key guard',
   contract_fields: 'Contract-field readers',

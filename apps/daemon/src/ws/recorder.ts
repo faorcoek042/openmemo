@@ -24,15 +24,31 @@ import { join } from 'node:path';
 import type { AsrStream, TranscriptSegment } from '@openmemo/pipeline';
 import { PRIORITY } from '@openmemo/pipeline';
 import { canonicalAssetRelPath } from '@openmemo/runtime';
-import { makeEvent, topics, ulid, type RecorderErrorReason, type SseEvent } from '@openmemo/shared';
+import {
+  ASR_SAMPLE_RATE,
+  makeEvent,
+  topics,
+  ulid,
+  type RecorderErrorReason,
+  type SseEvent,
+} from '@openmemo/shared';
 
 import type { Repos } from '../db/repos.js';
 import type { SseHub } from '../http/sse.js';
 import type { JobQueue } from '../jobs/queue.js';
 import { generatePeaksAsset } from '../media/peaksAsset.js';
 
-/** 16 kHz 单声道 int16 —— 与 `AsrStream.write()` 的契约一致。 */
-export const RECORD_SAMPLE_RATE = 16_000;
+/**
+ * 上行 PCM 的采样率：16 kHz 单声道 int16 —— 与 `AsrStream.write()` 的契约一致。
+ *
+ * ⚠️ **不是一个自己的字面量**。它是**跨进程协议常量**：浏览器
+ * （`apps/web/src/features/recorder/asrStream.ts`）按这个率采集，原样二进制上行，
+ * 这里按它写 WAV 头并转发给识别器 —— **中间没有任何一次重采样**。
+ * 两边各写一份 `16_000` 的时候，一边改了另一边**不会红**（都是 `number`、
+ * 两边各有自洽的测试），症状是**音频静默错采样**、识别结果整体错位。
+ * 唯一事实来源见 `packages/shared/src/audio.ts`。
+ */
+export const RECORD_SAMPLE_RATE = ASR_SAMPLE_RATE;
 
 /**
  * 上行背压上限（D-01 §3.4）：积压超过 3 秒就丢最老的帧。

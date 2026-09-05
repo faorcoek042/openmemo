@@ -314,9 +314,9 @@ function makeSegments(count: number, startSeq = 0): TranscriptSegmentDto[] {
         s % 9 === 5
           ? SEGMENT_FLAG.LOW_CONFIDENCE
           : s % 17 === 13
-            ? SEGMENT_FLAG.HALLUCINATION
+            ? SEGMENT_FLAG.SUSPECT_REPETITION
             : s % 23 === 7
-              ? SEGMENT_FLAG.CONFIRMED // 演示"已保留（无对应更新）"这一态
+              ? SEGMENT_FLAG.HUMAN_CONFIRMED // 演示"已保留（无对应更新）"这一态
               : 0,
       editedAt: s % 23 === 7 ? Date.now() - 3_600_000 : null,
       textRaw: s % 23 === 7 ? '这里是识别原文，用户改过。' : null,

@@ -51,8 +51,8 @@ export function SegmentRow({
   }, [editing]);
 
   const edited = seg.editedAt != null;
-  const preserved = (seg.flags & SEGMENT_FLAG.CONFIRMED) !== 0;
-  const hallucination = (seg.flags & SEGMENT_FLAG.HALLUCINATION) !== 0;
+  const preserved = (seg.flags & SEGMENT_FLAG.HUMAN_CONFIRMED) !== 0;
+  const hallucination = (seg.flags & SEGMENT_FLAG.SUSPECT_REPETITION) !== 0;
   const lowConf = (seg.flags & SEGMENT_FLAG.LOW_CONFIDENCE) !== 0;
 
   const commit = () => {

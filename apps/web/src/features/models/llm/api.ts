@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import type { LlmDetectResponse, LlmModelsResponse, PurposeBindings } from '@openmemo/shared';
+import type {
+  LlmDetectResponse,
+  LlmModelsResponse,
+  MaskedSecret,
+  PurposeBindings,
+  SecretsDisclosure,
+} from '@openmemo/shared';
 
 import { api } from '../../../lib/api/client';
 import { qk } from '../../../app/query';
@@ -51,31 +57,26 @@ export function usePatchSettingsMutation() {
 
 /* ──────────────────────────── secrets（密钥）──────────────────────────── */
 
-export interface MaskedSecret {
-  key: string;
-  /** 例 `sk-…4f2a`。**服务端永不回传明文**，这是它唯一能给的确认线索。 */
-  masked: string;
-  enc: string;
-  updatedAt: number;
-}
-
-/**
- * 明文存储告知 —— **由服务端下发，前端不自己编**。
+/*
+ * ★ 这两个**就是契约那两份**（`@openmemo/shared`），照 T-150 的别名法。
  *
- * ADR-006 决策 1 要求"显式告知路径与权限，不许含糊"。
- * 而路径只有 daemon 知道（随 `OPENMEMO_DATA_DIR` 变），前端硬编码必然会说错 ——
- * 我上一版就硬编码了 `~/.local/share/openmemo/openmemo.db`，
- * 实测这个实例的真实路径是 `/tmp/openmemo-t038/secrets.json`，**连文件都不是同一个**。
- * 所以这段文案的权威来源必须是服务端，前端只负责显示。
+ * ⚠️ 它们原来是手写件，而且**已经在分叉、两处分叉的方向都是「放宽」**：
+ *
+ *   | 字段 | 契约 | 这里原来写的 |
+ *   |---|---|---|
+ *   | `SecretsDisclosure.storage` | `'plaintext-file'` | `string` |
+ *   | `MaskedSecret.enc` | `SecretEncoding`（三值联合） | `string` |
+ *
+ * 放宽之后编译器就再也拦不住「服务端发了一个谁也不认识的值」，
+ * 而那正是它在这条链上唯一能帮上忙的地方。
+ *
+ * ⚠️ 前端**够不着 `@openmemo/llm`**（它的 `.` 导出会把 `secrets.ts` 的 `chmodSync`
+ * 打进浏览器 bundle —— 那次「开发服务器下笔记详情页整页崩溃」就是这么来的），
+ * 所以契约落在 shared，llm / daemon / 这里三边都指向它。
+ * 「明文存储告知为什么必须由服务端下发」（前端硬编码过一次路径，实测连文件都不是同一个）
+ * 那段理由随声明一起搬到了 `packages/shared/src/secrets.ts`。
  */
-export interface SecretsDisclosure {
-  storage: string;
-  path: string;
-  filePermission: string;
-  dirPermission: string;
-  messageZh: string;
-  message: string;
-}
+export type { MaskedSecret, SecretsDisclosure };
 
 export interface SecretsResponse {
   secrets: MaskedSecret[];

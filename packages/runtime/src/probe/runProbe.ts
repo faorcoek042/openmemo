@@ -19,6 +19,8 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
+import type { BreakerVerdict } from '@openmemo/shared';
+
 import { CHILD_KILL_SIGNAL, libraryPathEnv } from '../childEnv.js';
 import type { ProbeFailureKind, ProbeOutput, ProbeResult } from '../types.js';
 import { isProbeOutput } from '../types.js';
@@ -377,14 +379,21 @@ function fingerprintChanged(state: BreakerState, current: string | null): boolea
 }
 
 /**
- * 断路器的三态。调用方据此决定**这一发探测跑不跑、用谁的预算**。
+ * 断路器的三态 —— **就是 `@openmemo/shared` 的那一份**，这里只是再导出。
  *
  * - `closed`  —— 正常。照常探测，用 `PROBE_TIMEOUT_MS`。
  * - `open`    —— 冷却期内。**一发都不探**（这才是断路器省下的钱）。
  * - `recover` —— 半开：冷却到期，该放一发恢复探测了。它必须用
  *   `PROBE_RECOVERY_TIMEOUT_MS`，且**不能跑在交互路径上**（调用方负责，见 setup.ts）。
+ *
+ * ★ 这里原来是**逐字抄的第二份**，而本包的 `selfcheck.ts` 早就在
+ *   `import { breakerDetail, breakerRemediation, breakerTripped } from '@openmemo/shared'` ——
+ *   也就是说**造句的函数用的是 shared 那份，类型却又抄了一遍**。
+ *   `scripts/orphan-exports-baseline.json` 当时记着这条：shared 那份「零消费方，
+ *   旧口径的裸名正则把 runtime 这份的引用算给了它，于是它一直隐身」。收敛掉之后
+ *   那条基线条目也跟着删了 —— 名单只准变短。
  */
-export type BreakerVerdict = 'closed' | 'open' | 'recover';
+export type { BreakerVerdict };
 
 export function breakerVerdict(
   state: BreakerState,

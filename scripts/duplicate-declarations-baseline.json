@@ -1,0 +1,183 @@
+{
+  "_comment": "★ `scripts/ci/check-duplicate-declarations.mjs` 的基线。⚠️ **它不是判据** —— 判据是那个脚本从源码里现算出来的两条（同名跨包 / 同字面量集合跨包），所以新的重复会自己冒出来，不需要有人记得把它加进某张表。这份文件只回答一个问题：**这一条已经有人看过了，结论是什么。** 每条的 note 用三种前缀标出结论的强度：🔴 = 复核过，确实是同一个概念、该收敛（写清它在等谁）；🟡 = 像是重复但没复核完 / 需要产品判断；✅ = 复核过，两份是对的（同名纯属撞车）。**未复核的一律写\"未复核\"，不许写成结论** —— 这份名单是给下一个人看的地图，一条假的✅比没有条目更坏。accepted 只准变短。",
+  "accepted": [
+    {
+      "key": "name:GuardResult",
+      "sites": [
+        "apps/daemon/src/http/guard.ts :: GuardResult",
+        "packages/pipeline/src/subprocess/argGuard.ts :: GuardResult"
+      ],
+      "note": "✅ 两份说的不是同一件事：`apps/daemon/src/http/guard.ts` 是 **HTTP 请求准入**的结果，`packages/pipeline/src/subprocess/argGuard.ts` 是 **argv 构造**的结果。\"guard\" 这个词太好用而已。"
+    },
+    {
+      "key": "name:LANES",
+      "sites": [
+        "apps/daemon/src/jobs/lanes.ts :: LANES",
+        "packages/pipeline/src/queue/lanes.ts :: LANES"
+      ],
+      "note": "🔴 **真重复，未处置。** `apps/daemon/src/jobs/lanes.ts` 与 `packages/pipeline/src/queue/lanes.ts` 各写一份**同 6 个 lane 名**（下面 `strset:cpu.media|…` 那条就是它的同值那一面），连 `Lane` 与 `defaultCapacities` 都是双份。lane 名是 `jobs.lane` 列的取值，写错了任务会排进一条不存在的道。⚠️ 本轮范围是跨包常量/类型的那 8 条，这一条是新发现，**只立条目**。"
+    },
+    {
+      "key": "name:Lane",
+      "sites": [
+        "apps/daemon/src/jobs/lanes.ts :: Lane",
+        "packages/pipeline/src/queue/lanes.ts :: Lane"
+      ],
+      "note": "🔴 同 `name:LANES` —— 同一次重复的第 2 个符号。"
+    },
+    {
+      "key": "name:ModelFormat",
+      "sites": [
+        "apps/daemon/src/pipeline/modelStore.ts :: ModelFormat",
+        "packages/shared/src/models.ts :: ModelFormat"
+      ],
+      "note": "🟡 `apps/daemon/src/pipeline/modelStore.ts` 与 `packages/shared/src/models.ts` 同名。本轮**未复核**。"
+    },
+    {
+      "key": "name:PACKAGE_NAME",
+      "sites": [
+        "apps/daemon/src/index.ts :: PACKAGE_NAME",
+        "packages/downloader/src/index.ts :: PACKAGE_NAME",
+        "packages/llm/src/index.ts :: PACKAGE_NAME",
+        "packages/mindmap/src/index.ts :: PACKAGE_NAME",
+        "packages/pipeline/src/index.ts :: PACKAGE_NAME",
+        "packages/runtime/src/index.ts :: PACKAGE_NAME",
+        "packages/shared/src/index.ts :: PACKAGE_NAME"
+      ],
+      "note": "✅ **按构造就该每个包一份** —— 每个包报的是**它自己的名字**（7 个包 7 个不同的值）。`debt-cleanup §4.1` 记过它一次，孤儿门禁也被它坑过一次（7 个包互相\"证明\"了一圈）。它在这里是**噪音的下界**：这道门再怎么收紧也躲不开它，所以直接登记。"
+    },
+    {
+      "key": "name:PROBE_TIMEOUT_MS",
+      "sites": [
+        "packages/downloader/src/probe.ts :: PROBE_TIMEOUT_MS",
+        "packages/runtime/src/probe/runProbe.ts :: PROBE_TIMEOUT_MS"
+      ],
+      "note": "✅ 两份说的不是同一件事：`packages/downloader/src/probe.ts` 是**网络探测**超时（5 s），`packages/runtime/src/probe/runProbe.ts` 是 **GPU 探针**超时（ADR-003 决策 3 钉死 10 s）。取值本来就不同，合并会把 ADR 钉的那个数弄丢。"
+    },
+    {
+      "key": "name:ProbeResult",
+      "sites": [
+        "apps/web/src/lib/api/types.ts :: ProbeResult",
+        "packages/pipeline/src/audio/ffmpeg.ts :: ProbeResult",
+        "packages/runtime/src/types.ts :: ProbeResult",
+        "packages/shared/src/notes.ts :: ProbeResult"
+      ],
+      "note": "🟡 **四份同名，至少三个不同概念。** ffmpeg 的 `ProbeResult`（ffprobe 输出）、runtime 的（GPU 探针）、shared/notes 的（贴链接先看一眼）、web 的。同名纯属\"probe\"这个词太好用。⚠️ web 那份与 shared 那份是不是同一个，本轮**未复核**。"
+    },
+    {
+      "key": "name:ProxyConfig",
+      "sites": [
+        "packages/pipeline/src/subprocess/proxy.ts :: ProxyConfig",
+        "packages/shared/src/proxy.ts :: ProxyConfig"
+      ],
+      "note": "🟡 `packages/pipeline/src/subprocess/proxy.ts` 与 `packages/shared/src/proxy.ts` 同名。本轮**未复核**两者形状是否一致。"
+    },
+    {
+      "key": "name:Remediation",
+      "sites": [
+        "packages/llm/src/errors.ts :: Remediation",
+        "packages/shared/src/events.ts :: Remediation"
+      ],
+      "note": "🟡 **两套策略，但本轮复核后\"证据不成立\"的部分要说清。** `packages/llm/src/errors.ts` 的 `{action, params?}` **没有 label**，而 `packages/shared/src/events.ts` 的契约把 `label`/`labelZh` 定为**必填**。⚠️ 原始线索说「`LlmError.toApiError()` 把无 label 的那份塞进 API 错误信封」—— **实测 `toApiError()` 全仓零调用方**（只有它自己的定义），所以那件事今天**没有在发生**。llm 的 remediation 实际只走到 `apps/daemon/src/http/rest/notes.ts` 的 `details: { hint: err.remediation }`，那不是 `ApiErrorBody.remediation` 那一格。⇒ 该怎么收敛（llm 侧补 label / 契约承认这一档可以没有）是个**产品判断**，两条路后果不同，**不在没人拍板时替它选**。真正该修的是那个零调用方的 `toApiError()`：它按签名承诺产出 `ApiErrorBody` 形状，而它产出的东西不满足那个契约。"
+    },
+    {
+      "key": "name:RunResult",
+      "sites": [
+        "packages/db/src/driver/types.ts :: RunResult",
+        "packages/pipeline/src/subprocess/runner.ts :: RunResult"
+      ],
+      "note": "✅ 两份说的不是同一件事：`packages/db/src/driver/types.ts` 是 **SQL 语句**的执行结果（`changes`/`lastInsertRowid`），`packages/pipeline/src/subprocess/runner.ts` 是**子进程**的执行结果（`stdout`/`code`）。"
+    },
+    {
+      "key": "name:SegmentRow",
+      "sites": [
+        "apps/daemon/src/db/repos.ts :: SegmentRow",
+        "apps/web/src/features/transcript/SegmentRow.tsx :: SegmentRow"
+      ],
+      "note": "✅ 撞车而已，连**种类**都不同：`apps/daemon/src/db/repos.ts` 的是 `transcript_segments` 的**行类型**，`apps/web/src/features/transcript/SegmentRow.tsx` 的是一个 **React 组件**。"
+    },
+    {
+      "key": "name:StartOptions",
+      "sites": [
+        "apps/daemon/src/main.ts :: StartOptions",
+        "apps/web/src/features/recorder/asrStream.ts :: StartOptions"
+      ],
+      "note": "✅ 撞车而已：`apps/daemon/src/main.ts` 的是 **daemon 进程**的启动参数，`apps/web/src/features/recorder/asrStream.ts` 的是**开一次录音**的参数。"
+    },
+    {
+      "key": "name:TranscriptSegment",
+      "sites": [
+        "packages/mindmap/src/generate.ts :: TranscriptSegment",
+        "packages/pipeline/src/asr/types.ts :: TranscriptSegment",
+        "packages/shared/src/notes.ts :: TranscriptSegment"
+      ],
+      "note": "🟡 **三份，其中两份是刻意的、一份未复核。** `packages/pipeline/src/asr/types.ts` 那份是 ADR-001 mandate 2 明写的「OUR type」（含 `words`/`noSpeechProb`/`speakerLabel`，引擎原生结构不许越过这个边界）；`packages/shared/src/notes.ts` 那份是 **API 响应**形状（含 `seq`/`edited`，不含引擎细节）。两者**确实不是同一个东西**。`packages/mindmap/src/generate.ts` 那第三份本轮**没核**。"
+    },
+    {
+      "key": "name:ValidationResult",
+      "sites": [
+        "packages/mindmap/src/validate.ts :: ValidationResult",
+        "packages/shared/src/schemas.ts :: ValidationResult"
+      ],
+      "note": "🟡 `packages/mindmap/src/validate.ts` 与 `packages/shared/src/schemas.ts` 同名。本轮**未复核**。"
+    },
+    {
+      "key": "name:VerifyResult",
+      "sites": [
+        "apps/daemon/src/storage/move.ts :: VerifyResult",
+        "packages/downloader/src/verify.ts :: VerifyResult"
+      ],
+      "note": "✅ 两份说的不是同一件事：`apps/daemon/src/storage/move.ts` 校验的是**搬完的数据目录**，`packages/downloader/src/verify.ts` 校验的是**下载下来的文件**（sha256）。"
+    },
+    {
+      "key": "name:compareVersions",
+      "sites": [
+        "packages/runtime/src/platform/osFloors.ts :: compareVersions",
+        "packages/shared/src/components.ts :: compareVersions"
+      ],
+      "note": "🟡 **同名，不同判据 —— 而弱的那份可能该换掉。** `packages/shared/src/components.ts` 返回 `VersionOrder`（`same`/`newer`/`older`/**`incomparable`**，先判版本方案），`packages/runtime/src/platform/osFloors.ts` 返回 `number` 且把所有非数字段当 0。后者对 `latest` / commit sha 这种\"不可比\"的输入会**给出一个假的先后**。本轮**未复核**它的输入是否只可能是 `sw_vers` 那种纯数字串。"
+    },
+    {
+      "key": "name:defaultCapacities",
+      "sites": [
+        "apps/daemon/src/jobs/lanes.ts :: defaultCapacities",
+        "packages/pipeline/src/queue/lanes.ts :: defaultCapacities"
+      ],
+      "note": "🔴 同 `name:LANES` —— 同一次重复的第 3 个符号，而且这个是**函数**（两份实现）。"
+    },
+    {
+      "key": "name:isEdited",
+      "sites": [
+        "apps/web/src/features/transcript/api.ts :: isEdited",
+        "packages/pipeline/src/asr/merge.ts :: isEdited"
+      ],
+      "note": "🟡 **真重复（两份一行实现），未处置。** `packages/pipeline/src/asr/merge.ts` 与 `apps/web/src/features/transcript/api.ts` 各判一次「这段被人编辑过没有」，都是 `editedAt != null`。⚠️ 这条判据是 **D-06 §15.2 的冻结契约**（非 NULL 的段在离线重跑合并时永不覆盖），两份漂移的后果是**用户的编辑被静默覆盖**。参数类型不同（`MergeableSegment` vs `TranscriptSegmentDto`），收敛要先有一个共同的最小结构。"
+    },
+    {
+      "key": "name:run",
+      "sites": [
+        "packages/pipeline/src/subprocess/runner.ts :: run",
+        "packages/runtime/src/detect/system.ts :: run"
+      ],
+      "note": "✅ 同上一条的函数版：一个跑子进程、一个是 runtime 探测系统信息的内部小工具。**都是 `run`** 只说明这个词太短。"
+    },
+    {
+      "key": "strset:cpu.media|gpu.asr|gpu.llm|io.local|net.download|net.llm",
+      "sites": [
+        "apps/daemon/src/jobs/lanes.ts :: LANES",
+        "packages/pipeline/src/queue/lanes.ts :: LANES"
+      ],
+      "value": "cpu.media, gpu.asr, gpu.llm, io.local, net.download, net.llm",
+      "note": "🔴 同 `name:LANES` 的**同值**那一面。留着它是刻意的：万一有人把其中一份改了名，同名那条就瞎了，这一条还看得见。"
+    },
+    {
+      "key": "strset:paraformer|sherpa-onnx|whisper.cpp",
+      "sites": [
+        "packages/pipeline/src/asr/selectEngine.ts :: EngineId",
+        "packages/shared/src/backends.ts :: ASR_ENGINE_IDS"
+      ],
+      "value": "paraformer, sherpa-onnx, whisper.cpp",
+      "note": "🟡 **真重复，未处置。** `packages/pipeline/src/asr/selectEngine.ts` 的 `EngineId` 与 `packages/shared/src/backends.ts` 的 `ASR_ENGINE_IDS` 是**同一组引擎 id、名字不同** —— 这正是「抄的时候顺手改了名，同名那条判据就瞎了」的实例，留在这里当那条判据的活证据。收敛方向应是 pipeline 引 shared，本轮未做。"
+    }
+  ]
+}
