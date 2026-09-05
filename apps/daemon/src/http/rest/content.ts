@@ -432,16 +432,38 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
           sendJson(res, 200, { mindmap: null });
           return true;
         }
-        const doc = mindmaps.loadDoc(row);
+        const loaded = mindmaps.loadDoc(row);
+        /*
+         * ⚠️ 这里**不能**回 `doc: null` —— 前端把「有 row 但 doc 为 null」渲染成
+         * 空态「还没有思维导图」（`MindmapPage.tsx` 的 EmptyState）。
+         * 而走到这个分支时导图**是存在的**（`row` 就在手上，`revision` 也拿得到），
+         * 只是它的文档读不出来。把这个说成「还没有」= 把我们弄丢了说成这里本来就没有。
+         *
+         * 500 让前端走 `isError` 分支（`MindmapPage.tsx:30` 的 `ErrorBlock` + 重试），
+         * 用户看到的是「出问题了」而不是「你没生成过」。
+         */
+        if (!loaded.ok) {
+          sendError(
+            res,
+            500,
+            'MINDMAP_UNREADABLE',
+            `mindmap ${row.uid} exists (revision ${row.revision}) but its document could not be read: ${loaded.reason}`,
+            loaded.reason === 'corrupt'
+              ? '这条笔记的思维导图存在，但它的文档已损坏、读不出来 —— 不是"还没生成"。重新生成会覆盖它。'
+              : '这条笔记的思维导图存在，但它的文档暂时读不出来 —— 不是"还没生成"。',
+            { details: { mindmapUid: row.uid, revision: row.revision, reason: loaded.reason } },
+          );
+          return true;
+        }
         sendJson(res, 200, {
           mindmap: {
             uid: row.uid,
             title: row.title,
             revision: row.revision,
             generatedBy: row.generated_by,
-            nodeCount: doc ? Object.keys(doc.nodes).length : 0,
+            nodeCount: Object.keys(loaded.doc.nodes).length,
           },
-          doc: doc ?? null,
+          doc: loaded.doc,
         });
         return true;
       }
@@ -453,12 +475,24 @@ export function createContentRoutes(deps: ContentRoutesDeps): {
 
         if (what === 'mindmap') {
           const row = mindmaps.latestOfNote(note.id);
-          const doc = row ? mindmaps.loadDoc(row) : undefined;
-          if (!doc) {
+          if (!row) {
             sendError(res, 404, 'NO_MINDMAP', 'no mindmap for this note', '这条笔记还没有思维导图');
             return true;
           }
-          const out = exportMindmap(doc, format);
+          // 同上：导图在、只是读不出来时，404「还没有」是假话（会让用户以为不用找了）。
+          const loaded = mindmaps.loadDoc(row);
+          if (!loaded.ok) {
+            sendError(
+              res,
+              500,
+              'MINDMAP_UNREADABLE',
+              `mindmap ${row.uid} exists (revision ${row.revision}) but its document could not be read: ${loaded.reason}`,
+              '这条笔记的思维导图存在，但它的文档读不出来，导不出 —— 不是"还没生成"。',
+              { details: { mindmapUid: row.uid, revision: row.revision, reason: loaded.reason } },
+            );
+            return true;
+          }
+          const out = exportMindmap(loaded.doc, format);
           if (!out) {
             sendError(
               res,

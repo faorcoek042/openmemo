@@ -404,7 +404,17 @@ export class JobQueue {
    * **崩溃恢复**（D-01 §2.7 A）：启动时同步执行，在开始接受请求之前。
    *
    * 逻辑依据：我们刚启动，所以任何 `running`/`leased` 的 job 都**绝不可能真在跑**。
-   * 保留 `job_steps` 中已 succeeded 的步骤与 checkpoint —— 那是续跑的依据。
+   *
+   * ⚠️ 这里原来写的是「保留 `job_steps` 中已 succeeded 的步骤与 checkpoint —— 那是续跑的依据」。
+   * **那是假话**：`job_steps` / `job_steps.checkpoint_json` 全仓**零写入**
+   * （D-07/D-08 的 gap 台账里登记着），所以它既没东西可保留，也不可能是任何东西的依据。
+   *
+   * **真正的续跑依据是已经落库的转写段落**：`repos.resumableTranscript()`
+   * （`db/repos.ts`）按 note+engine+model 找回上一份未完成的 `transcripts`，
+   * runner（`jobs/runners/transcribe.ts`）再按 `transcript_segments.chunk_idx`
+   * 跳过已完成的 chunk。也就是说 checkpoint 是**数据本身**，不是一张进度表 ——
+   * 这条 UPDATE 只动 `jobs` 的租约字段，本来就不会碰到它，所以续跑确实是安全的，
+   * 只是安全的理由和原注释说的完全不是一回事。
    *
    * @returns 被修复的 job 数量
    */
