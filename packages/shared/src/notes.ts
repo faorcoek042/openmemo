@@ -665,6 +665,16 @@ export interface SearchHit {
   /** Timestamp of the hit, so the UI can jump straight to that moment in the audio. */
   startMs: number | null;
   endMs: number | null;
+  /**
+   * **HTML, not plain text.** Escaped by the daemon, with every matched term wrapped in
+   * `<mark>`; produced by FTS5's built-in `snippet()` and `toMarkedHtml()`
+   * (`apps/daemon/src/http/rest/search.ts`), which escapes first and substitutes the tags
+   * second — so a note body containing `<script>` stays inert.
+   *
+   * ⚠️ The UI renders this with `dangerouslySetInnerHTML`. Assigning a raw column value
+   * here re-opens stored XSS on the search page — which is exactly what this field used to
+   * carry (`r.title || r.body_text.slice(0, 120)`). Never put un-escaped text in it.
+   */
   snippet: string;
   /** bm25 score. Lower is better (SQLite FTS5 convention) — do not sort descending. */
   score: number;

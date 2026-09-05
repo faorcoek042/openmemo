@@ -185,8 +185,18 @@ export default function SearchPage() {
                 ) : null
               }
             >
-              {/* snippet 由服务端 simple_highlight 产出，含 <mark> 标签。
-                  这里是**受控的服务端输出**，不是用户输入，故可安全渲染。 */}
+              {/*
+                snippet 是**服务端已经转义好的 HTML**，命中处包在 `<mark>` 里
+                （FTS5 内置 `snippet()` + `toMarkedHtml()`，见 `rest/search.ts`）。
+
+                ⚠️ 这段注释此前写的是「由服务端 simple_highlight 产出……不是用户输入，
+                故可安全渲染」—— **两句都是假的**：全仓从来没有调用过 `simple_highlight`，
+                而这一格当时发的就是 `r.title || r.body_text.slice(0,120)`，
+                也就是**用户自己写的标题和正文原文**。于是一条标题叫
+                `<img src=x onerror=…>` 的笔记，在搜索结果页上是会执行的。
+                注释宣布这条链子是安全的，所以没有人再去看另一端 —— 与 #87 同一个形状。
+                现在转义真的发生在服务端（先转义、后插标签），这句话才成立。
+              */}
               <p
                 className="mt-1 text-sm text-ink-secondary [&_mark]:bg-accent-tint [&_mark]:text-ink"
                 dangerouslySetInnerHTML={{ __html: h.snippet }}

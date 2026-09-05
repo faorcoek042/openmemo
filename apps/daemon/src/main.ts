@@ -55,6 +55,7 @@ import { jobCreatedEvent, jobStateEvent, pipelineJobOf, pipelineKindOf } from '.
 import { toolchainMissing } from '@openmemo/shared';
 import { LanePool } from './jobs/lanes.js';
 import { Repos } from './db/repos.js';
+import { backfillBodyText } from './db/backfillBodyText.js';
 import { buildPipeline, resolveToolchain, type PipelineBundle } from './pipeline/setup.js';
 import { toolRefreshMessage } from './bootstrap/tool-refresh-message.js';
 import { resolveExtensionDir } from './pipeline/modelStore.js';
@@ -844,6 +845,36 @@ export async function startDaemon(opts: StartOptions = {}): Promise<RunningDaemo
       extensions: defaultExtensionPaths(extensionRoot),
       backupDir: paths.backupsDir,
     });
+
+    /*
+     * ---- 存量笔记的 `body_text` 回填（#87 的另一半）----
+     *
+     * #87 让时间锚点进得了纯文本投影，但那条链子**只有 `PATCH /api/notes/:uid` 会走**：
+     * `extractPlainText()` 全仓只有那一个产品调用方、`notes.body_text` 全仓只有那一个
+     * 写入方。于是升级之后**不重存就照样搜不到**，而用户没有任何理由知道要去重存。
+     * 成因与「幂等 / 不覆盖成空 / 不动 updated_at / 索引靠触发器」四条约束
+     * 都写在 `db/backfillBodyText.ts` 的文件头。
+     *
+     * 位置紧挨着开库：必须在任何人读 `notes` 之前跑完，否则一次早到的搜索会拿到旧投影。
+     * 指纹一致时它直接返回（`ran:false`），代价只是一次 `app_meta` 查询。
+     */
+    const bodyText = backfillBodyText(database.db);
+    if (bodyText.error) {
+      // 失败只是"搜索结果可能不全"，不是"库坏了" —— 但**必须说出来**
+      console.warn(`[daemon] ⚠️  正文投影回填失败（不影响启动）：${bodyText.error}`);
+    } else if (bodyText.ran) {
+      console.log(
+        `[daemon] 正文投影回填：扫描 ${bodyText.scanned} 条、更新 ${bodyText.updated} 条` +
+          `（${bodyText.ms}ms，指纹 ${bodyText.fingerprint}）`,
+      );
+      // 这两个数不为 0 时代表有笔记**没被修好**，不能只留在返回值里
+      if (bodyText.refused > 0) {
+        console.warn(`[daemon] ⚠️  ${bodyText.refused} 条投影为空、已保留原值（未覆盖）`);
+      }
+      if (bodyText.unparsable > 0) {
+        console.warn(`[daemon] ⚠️  ${bodyText.unparsable} 条 body_json 解析不了，已原样跳过`);
+      }
+    }
 
     /*
      * ★ 每个流水线 job 一落库就广播 `job.created`（T-130）。

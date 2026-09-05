@@ -31,9 +31,100 @@ interface Hit {
   seq: number | null;
   startMs: number | null;
   endMs: number | null;
+  /** **已转义的 HTML 片段**，命中处包在 `<mark>` 里。见 `toMarkedHtml()`。 */
   snippet: string;
   score: number;
   source: 'segment' | 'note';
+}
+
+/* ------------------------------ 命中摘要 ------------------------------ */
+
+/**
+ * FTS5 `snippet()` 的开合标记。**刻意不是 `<mark>` / `</mark>`。**
+ *
+ * `snippet()` 把标记**原样插进列的原文里**，它不做任何 HTML 转义。直接传
+ * `'<mark>'` 就等于把「用户写的正文 + 我们插的标签」拼成一段 HTML 交给前端 ——
+ * 而前端 `SearchPage.tsx` 正是用 `dangerouslySetInnerHTML` 渲染这一格。
+ * 于是一条标题叫 `<img src=x onerror=…>` 的笔记会在搜索结果页上执行。
+ *
+ * 所以走两步：先让 SQLite 插两个**不可能有含义的控制字符**，
+ * 再在 JS 里 **先整体转义、后把这两个字符换成 `<mark>`**（`toMarkedHtml()`）。
+ * 顺序反过来就白做了。
+ *
+ * ⚠️ 这两个字符不会从用户的查询串里溜进来：`toFtsQuery()` 第一步就把
+ * `U+0000`–`U+001F` 全替换成空格。它们只可能来自**笔记正文本身**，
+ * 那种情况由 `toMarkedHtml()` 末尾的"清掉落单标记"兜住 —— 最坏结果是少画一处高亮，
+ * 不会变成标签。
+ */
+const MARK_OPEN = '\u0002';
+const MARK_CLOSE = '\u0003';
+const ELLIPSIS = '…';
+
+/**
+ * 摘要窗口（token 数）。FTS5 的上限是 64。
+ *
+ * 取 32 而不是文档示例里的 12：`simple` 分词器下**一个汉字就是一个 token**，
+ * 12 个 token 的中文摘要只有 12 个字，看不出上下文。
+ * `[实测]` 用户库里 275 条转写段落平均 64 字符、最长 108，32 token 足够覆盖整段。
+ */
+const SNIPPET_TOKENS = 32;
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * `snippet()` 的产出 → 可以安全塞进 innerHTML 的片段。
+ *
+ * **必须先转义再替换标记**：反过来的话转义会把我们自己刚插进去的 `<mark>` 也吃掉。
+ * 成对匹配（而不是分别 replace 两个字符）是为了让**正文里原本就有**的
+ * `U+0002` / `U+0003` 无法造出一个落单的标签，最后再把没配上对的清掉。
+ */
+function toMarkedHtml(raw: string | null | undefined): string {
+  if (!raw) return '';
+  return (
+    escapeHtml(raw)
+      // eslint-disable-next-line no-control-regex -- 刻意匹配 snippet() 插进来的哨兵标记
+      .replace(/\u0002([^\u0002\u0003]*)\u0003/g, '<mark>$1</mark>')
+      // eslint-disable-next-line no-control-regex -- 同上：清掉正文里自带的、没配上对的哨兵
+      .replace(/[\u0002\u0003]/g, '')
+  );
+}
+
+/**
+ * 笔记命中要显示哪一段。
+ *
+ * ## 这一格原来是 `r.title || r.body_text.slice(0, 120)`
+ *
+ * `notes.title` 有 `NOT NULL DEFAULT ''`，但真实笔记的标题几乎从不为空
+ * （导入/录音都会填文件名）⇒ **短路的左边永远为真** ⇒ 摘要恒等于标题。
+ * `[浏览器实测]` 搜 `0:39` 命中之后，卡片上是「audit-long.wav / audit-long.wav」：
+ * **标题重复两遍，而真正匹配到的 `[0:39]` 一个字都不出现。**
+ * 用户搜到了，却拿不到「命中在哪」的任何证据 —— 这直接抵消了让它能被搜到的那次修复。
+ *
+ * ## 现在的规则
+ *
+ * 1. **完全不看 `title` 列**（FTS 的第 0 列）。卡片上已经单独渲染了标题
+ *    （`SearchPage.tsx` 的 `title={h.noteTitle}`），摘要再抄一遍是纯噪音。
+ * 2. 正文（第 1 列）与摘要（第 2 列）各取一段 `snippet()`，
+ *    **优先选真的画出了高亮的那一段** —— 命中在摘要里时不该给一段没高亮的正文开头。
+ * 3. 两段都没高亮（命中只在标题里）时退回正文开头：
+ *    `snippet()` 在该列没有命中时返回的正是"这一列的开头若干 token"，
+ *    这恰好就是我们想要的降级 —— **宁可给一段没高亮的上下文，也不要整个丢空**。
+ * 4. 正文为空（`body_text = ''`）时 `snippet()` 返回空串，这一格就真的是空的。
+ *    那是实话：这条笔记确实没有正文可展示。
+ */
+function noteSnippet(bodySnippet: string | null, summarySnippet: string | null): string {
+  const body = toMarkedHtml(bodySnippet);
+  const summary = toMarkedHtml(summarySnippet);
+  if (body.includes('<mark>')) return body;
+  if (summary.includes('<mark>')) return summary;
+  return body || summary;
 }
 
 /**
@@ -95,6 +186,21 @@ export function createSearchRoutes(deps: SearchRoutesDeps): {
       // 降级时直接用已自行转义的查询串。
       const matchExpr = tokenizer === 'simple' ? 'simple_query(:q)' : ':q';
 
+      /*
+       * 摘要用 **FTS5 内置的 `snippet()`**，不用 libsimple 的 `simple_snippet()`。
+       *
+       * 判据是量出来的，不是偏好：`[实测]` 在 `tokenize='simple'` 的表上，两者对
+       * `zhong` / `zg` / `zhongguo` / `中国` / `dmx` / `da` **六条查询逐字节相同**
+       *（含拼音首字母、拼音前缀这两种最可能分叉的形态）。
+       * 既然产出一样，就选**不依赖扩展**的那个：`simple_snippet()` 只在 libsimple
+       * 加载成功时存在，用它就等于给降级路径新开一个
+       * "no such function: simple_snippet" 的 500 —— 而降级恰恰是这条路最需要活着的时候。
+       *（`buildMatchExpression()` 的注释记着同一个坑的上一次发生。）
+       */
+      const snip = (table: string, col: number): string =>
+        `snippet(${table}, ${col}, :markOpen, :markClose, :ellipsis, ${SNIPPET_TOKENS})`;
+      const snippetArgs = { markOpen: MARK_OPEN, markClose: MARK_CLOSE, ellipsis: ELLIPSIS };
+
       const hits: Hit[] = [];
       try {
         // ---- 段落命中（搜索的主战场）----
@@ -107,10 +213,13 @@ export function createSearchRoutes(deps: SearchRoutesDeps): {
             start_ms: number;
             end_ms: number;
             text: string;
+            snip: string | null;
             score: number;
           }>(
             `SELECT n.uid AS note_uid, n.title AS note_title, t.uid AS tr_uid,
-                    s.seq, s.start_ms, s.end_ms, s.text, bm25(segments_fts) AS score
+                    s.seq, s.start_ms, s.end_ms, s.text,
+                    ${snip('segments_fts', 0)} AS snip,
+                    bm25(segments_fts) AS score
              FROM segments_fts
              JOIN transcript_segments s ON s.id = segments_fts.rowid
              JOIN transcripts t ON t.id = s.transcript_id
@@ -118,7 +227,7 @@ export function createSearchRoutes(deps: SearchRoutesDeps): {
              WHERE segments_fts MATCH ${matchExpr} AND n.deleted_at IS NULL
              ORDER BY score LIMIT :limit`,
           )
-          .all({ q: ftsQuery, limit });
+          .all({ q: ftsQuery, limit, ...snippetArgs });
 
         for (const r of segRows) {
           hits.push({
@@ -128,7 +237,13 @@ export function createSearchRoutes(deps: SearchRoutesDeps): {
             seq: r.seq,
             startMs: r.start_ms,
             endMs: r.end_ms,
-            snippet: r.text,
+            /*
+             * 段落这一格原来发的是**整段原文**（`r.text`）。它不算错 —— 段落本来就短
+             *（`[实测]` 用户库 275 条平均 64 字符）—— 但它同样看不出"命中在哪个词"。
+             * 兜底仍然是整段原文（转义过的）：`snippet()` 理论上不会对一条 MATCH 到的
+             * 行返回空，但**如果它返回了，用户该看到原文，而不是一片空白**。
+             */
+            snippet: toMarkedHtml(r.snip) || escapeHtml(r.text),
             score: r.score,
             source: 'segment',
           });
@@ -136,14 +251,24 @@ export function createSearchRoutes(deps: SearchRoutesDeps): {
 
         // ---- 笔记标题/正文命中 ----
         const noteRows = db
-          .prepare<{ uid: string; title: string; body_text: string; score: number }>(
-            `SELECT n.uid, n.title, n.body_text, bm25(notes_fts) AS score
+          .prepare<{
+            uid: string;
+            title: string;
+            body_snip: string | null;
+            summary_snip: string | null;
+            score: number;
+          }>(
+            // 列序按 `0002_search.sql`：0=title、1=body_text、2=summary_md。**刻意不取第 0 列**，理由见 `noteSnippet()`。
+            `SELECT n.uid, n.title,
+                    ${snip('notes_fts', 1)} AS body_snip,
+                    ${snip('notes_fts', 2)} AS summary_snip,
+                    bm25(notes_fts) AS score
              FROM notes_fts
              JOIN notes n ON n.id = notes_fts.rowid
              WHERE notes_fts MATCH ${matchExpr} AND n.deleted_at IS NULL
              ORDER BY score LIMIT :limit`,
           )
-          .all({ q: ftsQuery, limit });
+          .all({ q: ftsQuery, limit, ...snippetArgs });
 
         for (const r of noteRows) {
           hits.push({
@@ -153,7 +278,7 @@ export function createSearchRoutes(deps: SearchRoutesDeps): {
             seq: null,
             startMs: null,
             endMs: null,
-            snippet: r.title || r.body_text.slice(0, 120),
+            snippet: noteSnippet(r.body_snip, r.summary_snip),
             score: r.score,
             source: 'note',
           });
