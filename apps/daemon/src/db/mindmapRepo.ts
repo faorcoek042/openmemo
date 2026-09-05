@@ -4,8 +4,22 @@
  * 单独一个文件而不是塞进 `repos.ts`：那个文件正被并行的另一项工作编辑，
  * 拆开可以避免写冲突（也更符合按领域分文件的习惯）。
  *
- * **持久化策略**：规范化表（`mindmap_nodes` 等）是真相，`doc_cache_json` 是读加速缓存。
- * `doc_cache_rev != revision` 即缓存失效 —— 与 D-02 §4.5「索引是可重建缓存」同一思路。
+ * **持久化策略（实况）**：`doc_cache_json` 是**唯一的读路径**；规范化表
+ * （`mindmap_nodes` / `mindmap_node_refs`）今天**只写不读**。
+ *
+ * ⚠️ 这一段原来写的是「规范化表是真相，`doc_cache_json` 是读加速缓存」——
+ * **反了**，而且它反的方向恰好会诱导出一个丢数据的改动：
+ *   - `loadDoc()` 只解 blob，**不存在**从规范化表重建 `MindMapDoc` 的代码路径；
+ *   - `doc.edges` / `doc.summaries`（自由连线与概要）**根本没被投影进规范化表**
+ *     —— `mindmap_edges` / `mindmap_summaries` 两张表零写入，它们只活在 blob 里。
+ *
+ * 所以谁要是信了那句话、去实现「缓存失效就从表里重建」，用户的自由连线与概要会
+ * **当场消失且不报错**。要把规范化表变成真相，**必须先补上 edges/summaries 的写入**。
+ *
+ * 今天不丢图的唯一原因是：`revision` 与 `doc_cache_json`/`doc_cache_rev`
+ * **在同一个事务里一起写**（见 `save()` 末尾），所以 `doc_cache_rev != revision`
+ * 目前**走不到**。一旦有人加「只改一个节点、bump revision、不重写 blob」的增量 PATCH，
+ * 它立刻可达 —— 那时缺的正是上面那条重建路径。
  */
 import type { DatabaseHandle } from '@openmemo/db';
 import type { MindMapDoc, MindMapNode } from '@openmemo/mindmap';
@@ -23,6 +37,19 @@ export interface MindMapRow {
   created_at: number;
   updated_at: number;
 }
+
+/**
+ * `loadDoc()` 的结果。
+ *
+ * - `absent` —— `doc_cache_json` 为空：这条导图从没写出过文档（今天走不到，
+ *   因为 `save()` 在同一事务里必写 blob）。
+ * - `stale`  —— blob 在，但 `doc_cache_rev != revision`：文档**存在但读不出来**，
+ *   且没有重建路径（今天走不到，理由见文件头）。
+ * - `corrupt`—— blob 在但 `JSON.parse` 失败：**可达**（外部损坏）。
+ */
+export type MindMapDocResult =
+  | { readonly ok: true; readonly doc: MindMapDoc }
+  | { readonly ok: false; readonly reason: 'absent' | 'stale' | 'corrupt' };
 
 export class MindMapRepo {
   constructor(private readonly db: DatabaseHandle) {}
@@ -205,13 +232,27 @@ export class MindMapRepo {
     });
   }
 
-  /** 读回 `MindMapDoc`。缓存有效就直接用，否则返回 undefined（调用方可重建）。 */
-  loadDoc(row: MindMapRow): MindMapDoc | undefined {
-    if (!row.doc_cache_json || row.doc_cache_rev !== row.revision) return undefined;
+  /**
+   * 读回 `MindMapDoc`。
+   *
+   * ★ 返回**判别式结果**而不是 `MindMapDoc | undefined` ★
+   *
+   * 原来的签名把三件完全不同的事压成同一个 `undefined`：
+   * 「这条笔记压根没有导图」「导图在库里但 blob 落后于 revision」「blob 解不开」。
+   * 调用方（`rest/content.ts`）于是把后两种也当成第一种，回 `doc: null` / 404
+   * 「这条笔记还没有思维导图」—— **把「我们读不出来」说成「这里本来就没有」**。
+   * 那是本仓的第一条红线：丢了要说丢了，不许渲染成空。
+   *
+   * 三个 reason 的现状（见文件头）：`absent` 与 `stale` 今天走不到，
+   * `corrupt` 可达（blob 被外部损坏 / 磁盘写坏）。都必须让调用方能说出真话。
+   */
+  loadDoc(row: MindMapRow): MindMapDocResult {
+    if (!row.doc_cache_json) return { ok: false, reason: 'absent' };
+    if (row.doc_cache_rev !== row.revision) return { ok: false, reason: 'stale' };
     try {
-      return JSON.parse(row.doc_cache_json) as MindMapDoc;
+      return { ok: true, doc: JSON.parse(row.doc_cache_json) as MindMapDoc };
     } catch {
-      return undefined;
+      return { ok: false, reason: 'corrupt' };
     }
   }
 }

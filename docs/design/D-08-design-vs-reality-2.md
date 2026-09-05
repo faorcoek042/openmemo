@@ -137,7 +137,10 @@ method: 逐条读码复审 + 对运行中的隔离实例打探针 + 端到端链
 ✅ `note_anchors`（`db/segmentRepo.ts:149`）· ✅ `transcript_segments.text_raw`/`edited_at`（`segmentRepo.ts:67-72`）
 🔴 仍空：`embed_chunks`、`speakers`、`mindmap_edges`、`mindmap_summaries`、`recordings`、
 `backend_installs`、`model_installs`（**安装记录走 JSON manifest，与表并存**）、`job_steps`、`job_events`、
-`secrets`（实际落 JSON 文件）、`vecInsert/vecDelete/vecSearch`
+`vecInsert/vecDelete/vecSearch`
+
+✅ **已了结（移出本清单）**：`secrets` —— 不是"还没做"，是 ADR-006 决策 1 **改了设计**、
+`SecretStore` 落 JSON 文件且在生产路径上真的在用；表刻意留空不删。详见 D-07 §2.1 末尾那一段。
 
 ---
 

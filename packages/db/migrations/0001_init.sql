@@ -130,7 +130,12 @@ CREATE TABLE media_sources (
   input_url     TEXT,          -- 用户原始输入（已通过 D-01 §8.4 校验）
   canonical_url TEXT,
   site          TEXT,          -- youtube|bilibili|xiaoyuzhou|podcast|...
-  external_id   TEXT,          -- 站点侧唯一 id，用于"这个视频我已经导过了"
+  external_id   TEXT,          -- 站点侧唯一 id。⚠️ **设计意图**是"这个视频我已经导过了"，
+                               --    但 createSource()（db/repos.ts）至今不写 site/external_id，
+                               --    两列恒为 NULL ⇒ 下面的 idx_media_sources_dedupe 是
+                               --    `WHERE external_id IS NOT NULL` 的部分索引 ⇒ **永远为空**
+                               --    ⇒ **导入去重从未生效过**（重复导同一个链接会得到两条笔记）。
+                               --    要接上：在导入适配器里解析出 site + external_id 再写进来。
   title         TEXT,
   author        TEXT,
   description   TEXT,
@@ -515,6 +520,9 @@ CREATE UNIQUE INDEX idx_tags_norm ON tags(name_norm);
 CREATE INDEX idx_note_tags_tag ON note_tags(tag_id);
 
 CREATE INDEX idx_media_sources_note ON media_sources(note_id, is_primary);
+-- ⚠️ 这个索引今天**从不拦任何东西**：external_id 恒为 NULL（见上面该列的注释），
+--    部分索引的 WHERE 把每一行都排除在外。它是**为将来准备好的**，不是在生效的功能 ——
+--    别把它的存在当成"导入已经会去重了"的证据。
 CREATE UNIQUE INDEX idx_media_sources_dedupe
   ON media_sources(site, external_id) WHERE external_id IS NOT NULL;
 

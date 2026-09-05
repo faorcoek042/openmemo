@@ -25,7 +25,13 @@ export const qk = {
   transcript: (noteUid: string) => ['transcript', noteUid] as const,
   mindmap: (noteUid: string) => ['mindmap', noteUid] as const,
   summary: (noteUid: string) => ['summary', noteUid] as const,
-  assets: (noteUid: string) => ['assets', noteUid] as const,
+  /*
+   * 这里原来还有一个 `assets: (noteUid) => ['assets', noteUid]` —— 已删。
+   * 它是八个"零引用"候选里**唯一真死的那个**：daemon 没有 assets 端点，
+   * 素材是嵌在 note detail 里发的（前端一路读 `note.assets`），设计文档也没为它规划过查询。
+   * 与它并列的 `jobs.detail` / `tags` 看着也零引用，但那两个是 D-05 §SSE 表和
+   * `GET /api/tags` 明文规划过、只是还没接线的 key —— 那种不能删。
+   */
   jobs: {
     all: ['jobs'] as const,
     detail: (id: string) => ['jobs', id] as const,

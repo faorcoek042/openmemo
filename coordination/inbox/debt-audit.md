@@ -775,3 +775,57 @@ tasks.lane.net.llm                    tasks.pauseAll                      tasks.
 
 **误报，别再追**（我核过）：`app.tasksBadge` 看似没用，实际是复数键，i18next 解析成 `app.tasksBadge_one`/`_other`，两个都有定义。
 另一条我核出来是**错的**、已从清单里剔除：曾怀疑 `progress.state.*` 未定义 —— `[实测]` zh-CN 与 en **两地都有** `progress.state.{queued,blocked,leased,running,paused}` 五个键。真正缺的是动态拼出来的 `progress.map 1/1` / `progress.normalize` / `progress.done`（见 A7）。
+
+---
+
+## [2026-09-05] 数据层死重复核 —— **一条都没删**，外加一个必须单独做的收敛项
+
+复核对象是一份「证据确凿该删」的清单（11 张零写零读的表 · `mindmap_nodes_fts` · shared 死导出段 ·
+9 个死列 · `notes.status='draft'` · `vec.ts` · `x.*` 事件 · 死 query key）。**逐条重证后一条都没删。**
+
+### 为什么一条都没删（结论，不是谨慎）
+
+**判据是「结构上不可达 / 功能没接线 / 只是最近没用」，只有第一种能删。**
+而这批候选里，绝大多数是**第二种**，且**本文件所在的这套 D-07/D-08 台账早就把它们登记在案了** ——
+`speakers`（说话人分离未接）· `mindmap_edges`/`mindmap_summaries`（自由连线与概要不产出）·
+`recordings`（F3 会话不落库）· `model_installs`/`backend_installs`（模型管理未接 DB）·
+`job_steps`/`job_events` · `embed_chunks`+`vec*`。
+
+⇒ **删这些表 = 删掉这个仓对「什么还没做」的记录。** 台账的价值恰恰在于它们还在。
+
+两条硬否决（不止是判断）：
+
+- **`speakers` 删了会在运行时炸**：`transcript_segments.speaker_id REFERENCES speakers(id)`
+  是**活表指向候选表**的外键，而 `pragmas.ts` 里 `foreign_keys = ON`。
+- **`external_id` 的证据是反的**：原始简报说"实际去重靠另一个唯一索引"。不存在那个索引 ——
+  `idx_media_sources_dedupe(site, external_id)` **就是**去重索引，只是 `createSource()` 不写这两列，
+  部分索引永远为空 ⇒ **导入去重从未生效**。删列会把这个洞封死。已在 `0001_init.sql` 注释
+  和 README「你该知道的」里如实写明。
+
+八组里唯一真死的是 `qk.assets` 一行（已删，理由留在 `app/query.ts` 原地）。
+
+### 🔴 立项：`packages/shared` 的平行定义要**收敛**，不是删除
+
+`packages/shared/src/notes.ts` 里那 18 个"零 importer"的导出**不能删** —— 因为其中几个在别处**有平行定义**，
+shared 这份是"唯一没人引用的那份"。删掉 = 放弃收敛的可能，方向正好反了。
+
+**该做的是让另外几份来引用 shared 这份。** 现状：
+
+| 符号 | 几份 | 在哪 |
+|---|---|---|
+| `SEGMENT_FLAG` | **3** | `apps/web/src/lib/events/types.ts:212` · `packages/pipeline/src/asr/types.ts:12` · `packages/shared/src/notes.ts:509` |
+| `TranscriptSegment` | **3** | `packages/pipeline/src/asr/types.ts:28` · `packages/mindmap/src/generate.ts:33` · `packages/shared/src/notes.ts:517` |
+
+⚠️ **为什么这条比看上去急**：`SEGMENT_FLAG` 是**位标志**，三份今天位值对得上**靠的是纪律，不是机制**。
+加第 5 个 flag 时必然分叉，而分叉的表现是"某些段落的低置信/幻觉标记在某一层悄悄错位"——
+不会有任何东西变红。
+
+**同族的第二例（我核过，建议一并收）**：`RECORD_SAMPLE_RATE = 16_000` 在**跨进程协议的两端各写一份** ——
+`apps/web/src/features/recorder/asrStream.ts:29` 与 `apps/daemon/src/ws/recorder.ts:35`，
+维系它们一致的只有一句注释（"与 daemon 的 `RECORD_SAMPLE_RATE` 必须一致"）。
+**一边改了另一边不会红，而后果是音频静默错采样**（识别结果整体错位，不报错）。
+第三个近亲：`packages/pipeline/src/audio/ffmpeg.ts:25` 的 `ASR_SAMPLE_RATE`。
+
+⚠️ **这一项没有在本轮做，是有意的**：它与另一路正在动的 `scripts/ci/` 有交集 ——
+`scripts/orphan-exports-baseline.json` 已经把 `notes.ts` 的 11 个符号基线化了，
+收敛会同时改动那份基线。**要单独一个 PR，且要和守卫那一路对齐之后再开。**

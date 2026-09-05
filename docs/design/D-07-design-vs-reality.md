@@ -133,11 +133,26 @@ method: 逐条读码比对 + 对运行中的 daemon 实地探针
 `note_anchors`（我的 M-7 前端已就绪，服务端断链）· `embed_chunks` · `speakers`（说话人分离未接）·
 `segment_translations`（v1 预留，符合设计）· `mindmap_edges` · `mindmap_summaries` ·
 `recordings`（F3 会话）· `backend_installs` · `model_installs`（**模型管理未接 DB**）·
-`job_steps` · `job_events` · `secrets`（密钥实际落在 JSON 文件 `packages/llm/src/secrets.ts:24`，不是设计的表）·
+`job_steps` · `job_events` ·
 `transcript_segments.text_raw` / `edited_at`（**我的 M-4 UI 无后端**）·
 `vecInsert`/`vecDelete`/`vecSearch`（实现完整有测试，生产调用方 0）·
 `recordProbeOutcome`/`isBlacklisted` · **整个 `@openmemo/runtime`** ·
 `SherpaOnnxEngine`/`ParaformerEngine`/`WhisperServerEngine`（实现完整，未注册进候选池）
+
+#### 已了结：`secrets` 表 —— **不是"还没做"，是"已被取代"**
+
+这一条曾列在上面的空壳清单里（"密钥实际落在 JSON 文件，不是设计的表"）。**它不属于那份清单** ——
+清单登记的是"设计了但还没接线"，而 `secrets` 表是**设计被改掉之后留下的空位**：
+
+- **ADR-006 决策 1** 明文选了「明文文件 0600 + 显式告知」，理由是 `keytar` 已归档、
+  本仓是 web-first 无 Electron 架构，接 OS keychain 跨平台成本高且不合拍。
+- 替代实现 `SecretStore`（`packages/llm/src/secrets.ts`）**在生产路径上真的在用**：
+  `apps/daemon/src/main.ts:72`、`llm/resolve.ts:113`、`llm/enumerate.ts:143`。
+
+⇒ **裁决：表刻意留空，不删。** 删表要写迁移、要动已发出去的版本装过的库，是纯风险；
+而空表的存储成本约等于零。真正的成本是"这里是不是漏做了什么"的概念混淆，
+**那个用这一段话了结掉就够了**。`0001_init.sql` 里保留 `secrets` 表与它的 `enc` 列，
+是为了日后真要升级到 keychain / aes-gcm 时不必再加表。
 
 ---
 
