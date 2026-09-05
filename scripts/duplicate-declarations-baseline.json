@@ -28,10 +28,10 @@
     {
       "key": "name:MaskedSecret",
       "sites": [
-        "apps/web/src/components/common/llm/api.ts :: MaskedSecret",
+        "apps/web/src/features/models/llm/api.ts :: MaskedSecret",
         "packages/shared/src/secrets.ts :: MaskedSecret"
       ],
-      "note": "🔴 **真重复且已分叉，等协调。** llm（实现）与 daemon（路由）本轮都改成引 `@openmemo/shared` 的契约了；web 那份在 `apps/web/src/components/common/llm/api.ts`（另一路地盘）。分叉点：`enc` 在契约里是 `SecretEncoding` 字面量联合，web 退化成了 `string`。收敛法 = T-150 的别名法。"
+      "note": "🔴 **真重复且已分叉，等协调。** llm（实现）与 daemon（路由）本轮都改成引 `@openmemo/shared` 的契约了；web 那份在 `apps/web/src/features/models/llm/api.ts`（另一路地盘）。分叉点：`enc` 在契约里是 `SecretEncoding` 字面量联合，web 退化成了 `string`。收敛法 = T-150 的别名法。"
     },
     {
       "key": "name:ModelFormat",
@@ -115,7 +115,7 @@
     {
       "key": "name:SecretsDisclosure",
       "sites": [
-        "apps/web/src/components/common/llm/api.ts :: SecretsDisclosure",
+        "apps/web/src/features/models/llm/api.ts :: SecretsDisclosure",
         "packages/shared/src/secrets.ts :: SecretsDisclosure"
       ],
       "note": "🔴 同上。分叉点：`storage` 在契约里是 `'plaintext-file'`，web 退化成 `string`。"
