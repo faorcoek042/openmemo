@@ -23,10 +23,20 @@
  * 3. **语义 3：stop 幂等。** 断线等同 stop，所以重复调用必须安全。
  */
 
-import type { RecorderErrorReason } from '@openmemo/shared';
+import { ASR_SAMPLE_RATE, type RecorderErrorReason } from '@openmemo/shared';
 
-/** 与 daemon 的 `RECORD_SAMPLE_RATE` 必须一致 —— 不一致会让识别结果整体错位。 */
-export const RECORD_SAMPLE_RATE = 16_000;
+/**
+ * 采集与上行 PCM 的采样率 —— **不再是这里的一个字面量**。
+ *
+ * ⚠️ 上一版这里写着 `16_000`，注释写着「与 daemon 的 `RECORD_SAMPLE_RATE` 必须一致
+ * —— 不一致会让识别结果整体错位」。那句话是对的，**而它只是一句话** ——
+ * 两边各写一份，一边改了另一边**不会红**（都是 `number`，两边各有自洽的断言），
+ * 症状是音频**静默错采样**。中间没有任何一次重采样：这里采集什么率，daemon
+ * 就按什么率写 WAV 头并喂给识别器。
+ *
+ * 唯一事实来源与四处消费者清单见 `packages/shared/src/audio.ts`。
+ */
+export const RECORD_SAMPLE_RATE = ASR_SAMPLE_RATE;
 
 export type RecorderServerMessage =
   | {

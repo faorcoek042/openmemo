@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
-import { validateSearchResponse } from '@openmemo/shared';
+import { validateSearchResponse, type SearchHit as SearchHitContract } from '@openmemo/shared';
 
 import { normalizeModes, type SearchMode } from './modes';
 import { api } from '../../lib/api/client';
@@ -8,20 +8,28 @@ import { qk } from '../../app/query';
 
 export type { SearchMode, SearchModes } from './modes';
 
-export interface SearchHit {
-  noteUid: string;
-  noteTitle: string;
-  /** 命中的转写段（有则可直达时间点），无则是笔记正文命中 */
-  startMs: number | null;
-  /**
-   * 已带 `<mark>` 高亮的片段 —— **服务端转义过的 HTML**，由 FTS5 内置的 `snippet()`
-   * 加 `toMarkedHtml()` 产出（`apps/daemon/src/http/rest/search.ts`）。
-   * ⚠️ 原注释说的是 `simple_highlight`，那个函数全仓从未被调用过；见 `SearchPage.tsx`。
-   */
-  snippet: string;
-  score: number;
-  kind: 'segment' | 'note' | 'mindmap_node';
-}
+/**
+ * 一条搜索命中 —— **就是 daemon 那一份**（`@openmemo/shared` 的 `SearchHit`），
+ * 照 `lib/api/types.ts` 的 T-150 别名法。
+ *
+ * ─── ⚠️ 这里原来不是「弱化的手抄件」，是一份**已经在说假话**的声明 ────────────
+ *
+ * | 手抄件写的 | daemon 实际发的（`rest/search.ts` + `SearchHitSchema`） | 后果 |
+ * |---|---|---|
+ * | `kind: 'segment' \| 'note' \| 'mindmap_node'` | **`source: 'segment' \| 'note'`** | **字段名就不一样** —— 按类型读 `hit.kind` 恒得 `undefined` |
+ * | （没有这三格） | `transcriptUid` / `seq` / `endMs` | daemon 一直在发，类型上却不存在 |
+ * | `noteUid: string` | `noteUid: NoteUid` | 弱化（这是三条里最轻的一条） |
+ *
+ * 它没崩，是因为**全仓没有任何一处读 `hit.kind`** —— `SearchPage.tsx` 只读
+ * `noteUid` / `noteTitle` / `startMs` / `snippet` 四个。**和 `<audio>` 从未进过 DOM
+ * 是同一族缺陷**：字段声明了、永远拿不到值、而且没有人发现。
+ * 正因如此，换成契约那份是**零调用点改动**。
+ *
+ * ⚠️ `mindmap_node` 那一档**没有顺手删** —— 它被捞进了契约的 `SEARCH_SOURCES`，
+ * 并在那里注明「服务端今天不发」。理由（`mindmap_nodes_fts` 建好了、
+ * `mindmap_nodes` 今天只写不读 ⇒ **建了一半没接线，不是不打算做**）写在那份声明上。
+ */
+export type SearchHit = SearchHitContract;
 
 /**
  * 搜索结果 + **服务端如实报的档位可用性**。

@@ -685,7 +685,23 @@ export interface RetranscribeResponse {
 
 /* --------------------------------- search --------------------------------- */
 
-export const SEARCH_SOURCES = ['segment', 'note'] as const;
+/**
+ * 一条命中来自哪里。
+ *
+ * ⚠️ **`mindmap_node` 今天服务端不发** —— 它在契约里，不代表它已经接通。
+ *
+ * 它是从 `apps/web` 那份手抄的 `SearchHit` 里**捞回来的**（那份写的是
+ * `kind: 'segment' | 'note' | 'mindmap_node'`，字段名和取值都与契约不一致）。
+ * 收敛时**没有顺手删掉它**，理由是：`packages/db/migrations/0001_init.sql` 里
+ * **`mindmap_nodes_fts` 这张 FTS5 表是建好的**，而 `mindmap_nodes` 今天
+ * 「只写不读」（`apps/daemon/src/db/mindmapRepo.ts` 文件头自己写着）——
+ * 也就是说导图搜索是**建了一半、没接线**，不是「不打算做」。
+ * 删掉这一档等于把那半截工作从类型上抹掉，下一个人就再也看不到它了。
+ *
+ * ⚠️ 反过来也别把它读成承诺：`apps/daemon/src/http/rest/search.ts` 只发
+ * `'segment'` 与 `'note'` 两种，**前端渲染时不能假设第三种会来**。
+ */
+export const SEARCH_SOURCES = ['segment', 'note', 'mindmap_node'] as const;
 export type SearchSource = (typeof SEARCH_SOURCES)[number];
 
 export interface SearchHit {

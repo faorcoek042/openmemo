@@ -16,6 +16,7 @@
 import { z } from 'zod';
 
 import { BACKEND_UNAVAILABLE_KINDS } from './hardware.js';
+import { SEARCH_SOURCES } from './notes.js';
 
 /* ------------------------------ primitives -------------------------------- */
 
@@ -664,7 +665,8 @@ export const SearchHitSchema = z.object({
   endMs: z.number().int().nullable(),
   snippet: z.string(),
   score: z.number(),
-  source: z.enum(['segment', 'note']),
+  // ★ 取值来自 SEARCH_SOURCES（含今天服务端还不发的 mindmap_node，理由见那份声明）
+  source: z.enum(SEARCH_SOURCES),
 });
 
 export const SearchResponseSchema = z.object({

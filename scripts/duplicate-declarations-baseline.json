@@ -26,14 +26,6 @@
       "note": "🔴 同 `name:LANES` —— 同一次重复的第 2 个符号。"
     },
     {
-      "key": "name:MaskedSecret",
-      "sites": [
-        "apps/web/src/features/models/llm/api.ts :: MaskedSecret",
-        "packages/shared/src/secrets.ts :: MaskedSecret"
-      ],
-      "note": "🔴 **真重复且已分叉，等协调。** llm（实现）与 daemon（路由）本轮都改成引 `@openmemo/shared` 的契约了；web 那份在 `apps/web/src/features/models/llm/api.ts`（另一路地盘）。分叉点：`enc` 在契约里是 `SecretEncoding` 字面量联合，web 退化成了 `string`。收敛法 = T-150 的别名法。"
-    },
-    {
       "key": "name:ModelFormat",
       "sites": [
         "apps/daemon/src/pipeline/modelStore.ts :: ModelFormat",
@@ -95,30 +87,6 @@
         "packages/pipeline/src/subprocess/runner.ts :: RunResult"
       ],
       "note": "✅ 两份说的不是同一件事：`packages/db/src/driver/types.ts` 是 **SQL 语句**的执行结果（`changes`/`lastInsertRowid`），`packages/pipeline/src/subprocess/runner.ts` 是**子进程**的执行结果（`stdout`/`code`）。"
-    },
-    {
-      "key": "name:SEGMENT_FLAG",
-      "sites": [
-        "apps/web/src/lib/events/types.ts :: SEGMENT_FLAG",
-        "packages/shared/src/notes.ts :: SEGMENT_FLAG"
-      ],
-      "note": "🔴 **真重复，等协调。** shared 与 pipeline 已收敛成一份（本轮），web 那份还在 `apps/web/src/lib/events/types.ts` —— 那是另一路正在动的目录，改它要先协调。⚠️ 位值相同但**四个位里三个名字不同**（`HALLUCINATION`↔`SUSPECT_REPETITION` 等），所以收敛 web 那份**不是删掉再 import**：`SegmentRow.tsx` 与 `lib/api/mock.ts` 的三处读取要跟着改名。位错了是静默的，还会污染已存的 `transcript_segments.flags`。"
-    },
-    {
-      "key": "name:SearchHit",
-      "sites": [
-        "apps/web/src/features/search/api.ts :: SearchHit",
-        "packages/shared/src/notes.ts :: SearchHit"
-      ],
-      "note": "🔴 **等协调，但\"手抄件\"这个说法是错的 —— 它已经是活缺陷。** web 那份（`apps/web/src/features/search/api.ts`）不是 shared 那份的弱化抄件：字段名就不一样（web 写 `kind: 'segment'|'note'|'mindmap_node'`，daemon 与契约发的是 `source: 'segment'|'note'`），还缺 `transcriptUid`/`seq`/`endMs`。`mindmap_node` 是**服务端从未发过**的第三档。⚠️ 已核：全仓**没有任何一处读 `hit.kind`**（`SearchPage.tsx` 只读 `noteUid`/`noteTitle`/`startMs`/`snippet`），所以换成 shared 的 `SearchHit` **不会有调用点要改** —— 这一条是安全的一行别名，只是不在本轮的地盘里。"
-    },
-    {
-      "key": "name:SecretsDisclosure",
-      "sites": [
-        "apps/web/src/features/models/llm/api.ts :: SecretsDisclosure",
-        "packages/shared/src/secrets.ts :: SecretsDisclosure"
-      ],
-      "note": "🔴 同上。分叉点：`storage` 在契约里是 `'plaintext-file'`，web 退化成 `string`。"
     },
     {
       "key": "name:SegmentRow",
@@ -210,15 +178,6 @@
       ],
       "value": "paraformer, sherpa-onnx, whisper.cpp",
       "note": "🟡 **真重复，未处置。** `packages/pipeline/src/asr/selectEngine.ts` 的 `EngineId` 与 `packages/shared/src/backends.ts` 的 `ASR_ENGINE_IDS` 是**同一组引擎 id、名字不同** —— 这正是「抄的时候顺手改了名，同名那条判据就瞎了」的实例，留在这里当那条判据的活证据。收敛方向应是 pipeline 引 shared，本轮未做。"
-    },
-    {
-      "key": "bitset:1|2|4|8",
-      "sites": [
-        "apps/web/src/lib/events/types.ts :: SEGMENT_FLAG",
-        "packages/shared/src/notes.ts :: SEGMENT_FLAG"
-      ],
-      "value": "1, 2, 4, 8",
-      "note": "🔴 同上（`SEGMENT_FLAG` 的**同值**那一面）。名字改了也逃不掉这一档 —— 这一档不看键名，只看位值。"
     }
   ]
 }
