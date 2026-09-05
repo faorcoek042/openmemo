@@ -1,4 +1,5 @@
 import { Node, mergeAttributes } from '@tiptap/core';
+import { TIME_ANCHOR_NODE_TYPE, timeAnchorText } from '@openmemo/shared';
 
 import { timecode } from '../../lib/format/time';
 
@@ -33,18 +34,47 @@ export interface TimeAnchorAttrs {
  *   `timecode()` 的第二份实现（两者对所有输入等价：非有限/负数都归 0，只是
  *   一个先 `Math.max(0, Math.floor(ms))`、一个先把 `ms` 归零，然后同样地整除 1000）。
  *
- * ⚠️ **这一份漂了的话，坏掉的是搜索，而且是静默的。**
- * 下面 `renderText()` 产出的 `[12:34]` **就是被写进 `body_text`、被 FTS5 索引的那个字符串**，
- * 而 `renderHTML()` 画在屏幕上的是另一次调用。两份实现一旦对不齐（哪怕只是补零规则），
- * 用户看到的时间码和索引里的时间码就不是同一个东西：
- * **他照着屏幕上的字搜，搜不到自己刚写的那条锚点，而没有任何一处报错。**
+ * ⚠️⚠️ **订正：上一版这段注释在这里写了一句假话，而且是本仓最贵的那一类。**
  *
- * 收敛之后 `padStart(2` 在 `apps/web/src` 里只剩 `lib/format/` 那一处 ——
- * 这条性质由 `lib/format/singleSource.test.ts` 钉着。
+ * 它写的是：「下面 `renderText()` 产出的 `[12:34]` **就是被写进 `body_text`、
+ * 被 FTS5 索引的那个字符串**」。**在真实链路上不是。** 逐段核过的链路是：
+ *
+ *   `NoteEditor.tsx` 的自动保存把 `bodyText: ed.getText()`（走本文件的 `renderText()`）
+ *   连同 `bodyJson` 一起 PATCH 上去
+ *        ↓
+ *   `apps/daemon/src/http/rest/content.ts` —— **有 `bodyJson` 时 `body_text` 一律由
+ *   服务端推导，客户端传的 `bodyText` 被直接覆盖、不报错**（那条规则本身是对的：
+ *   两个字段各自推导必然漂移）。而 `bodyJson` 是**每次**都传的。
+ *        ↓
+ *   `apps/daemon/src/db/richText.ts` 的 `extractPlainText()` —— **它**的输出才是
+ *   写进 `notes.body_text`、被 `notes_fts` 触发器索引的那个字符串。
+ *
+ * ⇒ `renderText()` 的产物在到达索引之前**每一次都被丢掉**。而那个真正管事的提取器
+ *   当时只收 `text` 节点和 `alt`/`title`/`label` 三个 attr —— 时间锚点这三样都没有，
+ *   于是它对索引的贡献是**零**：`[实测]` 浏览器审计里，屏幕上的 `0:04` 搜出 0 条，
+ *   同一段里的普通文字搜出 1 条，把 `0:04` 当纯文本再打一遍也搜出 1 条。
+ *
+ * **这条假注释正是这个缺陷活了这么久的原因**：它宣布这条链子已经接上了，
+ * 于是没有人再去看另一端。假注释不是文档问题，是"守卫失效的第四种形态"
+ *（注释型断言：读起来像不变式，但没有任何东西让它成真）。
+ *
+ * ── 现在这条链子靠什么成立 ──────────────────────────────────────────────
+ *
+ * 两端**调同一个函数**：`@openmemo/shared` 的 `timeAnchorText()`。
+ * 下面的 `renderText()` 一处，daemon 的 `extractPlainText()` 一处，没有第三份实现，
+ * 也没有"两边各写一遍再拿测试比对"。
+ *
+ * 覆盖它的守卫（先问"把修法退回去它会红吗"，逐条验过，会）：
+ *   · `apps/daemon/src/db/richText.test.ts` —— 拿审计现场那条笔记的 `body_json` 原样
+ *     断言投影里必须出现 `[0:04]`。删掉 daemon 那个口子 ⇒ 当场红。
+ *   · `packages/shared/src/timecode.test.ts` —— 基准向量 + 「全仓只许有一份实现」的
+ *     结构扫描。有人再抄一份 ⇒ 复制粘贴的那一刻就红。
+ *   · `lib/format/singleSource.test.ts` —— `apps/web/src` 里不许再出现补零逻辑。
  */
 
 export const TimeAnchor = Node.create({
-  name: 'timeAnchor',
+  // 节点类型名是**跨进程契约**：daemon 的纯文本投影按这个字符串认它（见 shared）
+  name: TIME_ANCHOR_NODE_TYPE,
   group: 'inline',
   inline: true,
   // atom：整体作为一个不可分割的单位，用户改不坏它的内部结构
@@ -80,12 +110,18 @@ export const TimeAnchor = Node.create({
   },
 
   /**
-   * 纯文本投影：`body_text` 供 FTS5 索引，锚点退化成 `[12:34]`。
-   * 不实现这个方法的话，`editor.getText()` 会把锚点整个吞掉 ——
-   * 用户搜"12:34"搜不到，而他明明在正文里看到了。
+   * 纯文本投影：锚点退化成 `[12:34]`。
+   *
+   * ⚠️ **它管的是 `editor.getText()`，不是 FTS 索引**（索引那份由 daemon 推导，
+   * 见上面那段订正）。真正走它的是：复制正文、以及 `NoteEditor` 那个"可选提示"
+   * 字段 `bodyText`（daemon 没起、走 mock 时它就是唯一那份）。
+   * 不实现这个方法的话，`editor.getText()` 会把锚点整个吞掉。
+   *
+   * 产出的字符串必须与 daemon 投影出来的**逐字节相同**，所以这里不许自己拼 ——
+   * 调 `timeAnchorText()`，daemon 那边调的是同一个。
    */
   renderText({ node }) {
-    return `[${timecode(Number(node.attrs.startMs ?? 0))}]`;
+    return timeAnchorText(Number(node.attrs.startMs ?? 0));
   },
 });
 
@@ -95,7 +131,7 @@ export function collectAnchors(doc: unknown): TimeAnchorAttrs[] {
   const walk = (n: unknown): void => {
     if (!n || typeof n !== 'object') return;
     const node = n as { type?: string; attrs?: Record<string, unknown>; content?: unknown[] };
-    if (node.type === 'timeAnchor' && node.attrs) {
+    if (node.type === TIME_ANCHOR_NODE_TYPE && node.attrs) {
       out.push({
         anchorKey: String(node.attrs.anchorKey ?? ''),
         startMs: Number(node.attrs.startMs ?? 0),

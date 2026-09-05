@@ -44,7 +44,7 @@ export {
 export function useModelsSourcesQuery() {
   return useQuery({
     queryKey: qk.models.sources,
-    queryFn: () => api<GetSourcesResponse>('/models/sources'),
+    queryFn: () => api<GetSourcesResponse>('models', '/models/sources'),
   });
 }
 
@@ -67,7 +67,7 @@ export function useModelPullMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (req: PullRequest) =>
-      api<PullResponse>('/models/pull', {
+      api<PullResponse>('models', '/models/pull', {
         method: 'POST',
         body: req,
         idempotencyKey: `pull:${req.id}`,
@@ -112,9 +112,13 @@ export function useModelDeleteMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<UninstallWithRefusalsResponse | undefined>(`/models/${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-      }),
+      api<UninstallWithRefusalsResponse | undefined>(
+        'models',
+        `/models/${encodeURIComponent(id)}`,
+        {
+          method: 'DELETE',
+        },
+      ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.models.installed });
       void qc.invalidateQueries({ queryKey: qk.models.storage });
@@ -127,7 +131,7 @@ export function useModelActivateMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (req: ActivateRequest) =>
-      api<ActivateResponse>('/models/activate', { method: 'POST', body: req }),
+      api<ActivateResponse>('models', '/models/activate', { method: 'POST', body: req }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.models.installed });
     },
@@ -137,14 +141,15 @@ export function useModelActivateMutation() {
 export function useModelVerifyMutation() {
   return useMutation({
     mutationFn: (id: string) =>
-      api<PullResponse>('/models/verify', { method: 'POST', body: { id } }),
+      api<PullResponse>('models', '/models/verify', { method: 'POST', body: { id } }),
   });
 }
 
 export function useGcMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (req: GcRequest) => api<GcResponse>('/models/gc', { method: 'POST', body: req }),
+    mutationFn: (req: GcRequest) =>
+      api<GcResponse>('models', '/models/gc', { method: 'POST', body: req }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.models.storage });
     },
@@ -163,7 +168,8 @@ export function useGcMutation() {
 export function useSourceProbeMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api<GetSourcesResponse>('/models/sources/probe', { method: 'POST' }),
+    mutationFn: () =>
+      api<GetSourcesResponse>('models', '/models/sources/probe', { method: 'POST' }),
     /*
      * 响应**就是**测完之后的完整快照，直接落缓存。
      *
@@ -201,7 +207,7 @@ export function useSelectSourceMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (req: SelectSourceRequest) =>
-      api<GetSourcesResponse>('/models/sources/select', { method: 'POST', body: req }),
+      api<GetSourcesResponse>('models', '/models/sources/select', { method: 'POST', body: req }),
     onSuccess: (data) => {
       qc.setQueryData(qk.models.sources, data);
     },
@@ -212,7 +218,7 @@ export function useJobCancelMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (jobId: string) =>
-      api<void>(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }),
+      api<void>('jobs', `/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.jobs.all });
     },
@@ -223,7 +229,7 @@ export function useJobRetryMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (jobId: string) =>
-      api<PullResponse>(`/jobs/${encodeURIComponent(jobId)}/retry`, { method: 'POST' }),
+      api<PullResponse>('jobs', `/jobs/${encodeURIComponent(jobId)}/retry`, { method: 'POST' }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.jobs.all });
     },
@@ -240,7 +246,7 @@ export function useModelBenchmarkMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<PullResponse>('/models/benchmark', { method: 'POST', body: { id } }),
+      api<PullResponse>('models', '/models/benchmark', { method: 'POST', body: { id } }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.models.installed });
     },

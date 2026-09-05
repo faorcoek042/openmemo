@@ -1,8 +1,9 @@
 /**
- * 两条守卫，都关于「声明了一件事，却没有任何东西让它成真」：
+ * 三条守卫，都关于「声明了一件事，却没有任何东西让它成真」：
  *
  *   ① **一个 `queryKey` 只许有一个 `queryFn`。**
  *   ② **界面上承诺要报告状态的每个 API 面，仓里必须真的有东西能写它。**
+ *   ③ **某个域一旦在 `SURFACES` 里声明了，该域的 `api()` 调用就必须带上 surface 实参。**
  *
  * ─────────────────────────────── ① ───────────────────────────────
  *
@@ -40,6 +41,30 @@
  * （前者走 `mediaUrl()` 直连 `<audio>`，后者是 WebSocket，都不经过 `api()`），
  * 它们没有任何 `<MockNotice>` 引用，所以这条守卫**不管它们** —— 那是另一笔账，
  * 绿灯不能读成"所有面的状态都是真的"。
+ *
+ * ─────────────────────────────── ③ ───────────────────────────────
+ *
+ * ⚠️ **② 的覆盖面取决于「有没有人挂过 `<MockNotice>` 条幅」，那是个偶然的判据。**
+ * `backends` 就是这么漏过去的：`/backends/*` 的六个调用**全是裸的**（⇒ `'generic'`），
+ * 全仓没有任何 `api('backends', …)` / `markSurface('backends', …)`，
+ * 于是这个面在四种打开顺序下都停在 `'unknown'` —— 与 ② 刚修掉的 `runtime`
+ * **结构上完全同型**。它逃掉只是因为**没人给它挂过条幅**。
+ *
+ * ③ 换一个不靠运气的判据：**`SURFACES` 里声明过的域**。
+ * 那份清单不是装饰 —— `ConnectivitySummary`（顶栏那句「已接通 N / 模拟 M」）
+ * 数的就是它里面除 `generic` 之外的每一项。一个面停在 `'unknown'`，
+ * 既不进"已接通"也不进"模拟"，于是**它在那个仪表盘上根本不存在**；
+ * 而它回落 mock 时打的 `'generic'` 又被那两个数**刻意排除**（#84 修的就是这条）。
+ * 也就是说：一次落到假数据上的 `/backends/installed`，全屏幕**没有任何一处**说得出口。
+ *
+ * ⚠️ 判据要求的是「带 surface 实参」，**不是**「surface 名等于路径首段」。
+ * 后者会误伤两处**刻意**的映射：`api('import', '/notes/probe')`、
+ * `api('transcript', '/notes/:uid/transcript')` —— 端点挂在 `/notes` 下，
+ * 但用户看到的是"导入"和"转写"两块，标注按用户看到的分。
+ *
+ * ⚠️ 这条**只管 `SURFACES` 里有名字的域**。`/components/*`、`/folders`、`/tags`、
+ * `/secrets`、`/llm/*` 今天没有对应的面，落 `'generic'` 是正确的、不是漏 ——
+ * 要不要给它们开面是另一笔账（开了这条守卫自然就管上了，这正是判据的意义）。
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -226,5 +251,92 @@ describe('② 界面上承诺要报告的每个 API 面，都必须真的有写�
     const declared = new Set<string>(SURFACES as readonly string[]);
     const unknown = [...surfacesPromisedInUi().keys()].filter((s) => !declared.has(s));
     assert.deepEqual(unknown, [], `<MockNotice> 用了没有声明的面：${unknown.join(', ')}`);
+  });
+});
+
+/* ═══════ ③ 声明过的域，它的 api() 调用不许再落进 'generic' ═══════ */
+
+interface ApiCall {
+  at: string;
+  /** 路径首段（`/backends/installed` → `backends`）。 */
+  head: string;
+  /** 显式传了 surface 实参吗？ */
+  declared: string | undefined;
+}
+
+/**
+ * 全部 `api(...)` 调用点。
+ *
+ * 用整文件匹配而不是按行：真实调用有相当一部分是折行写的
+ * （`api<GetCatalogResponse>(\n  'models',\n  `/models/catalog?…`,\n)`），
+ * 按行扫会把它们**全部漏掉**，而漏检的门禁会稳稳地报绿。
+ * 位置用"第几个换行"换算回行号，红的时候要能指到地方。
+ */
+function collectApiCalls(): ApiCall[] {
+  const out: ApiCall[] = [];
+  const RE = /\bapi\s*(?:<[^>]*>)?\s*\(\s*(?:'([a-zA-Z]+)'\s*,\s*)?[`']\/([a-zA-Z][\w-]*)/g;
+  for (const file of productFiles()) {
+    const src = source(file);
+    for (const m of src.matchAll(RE)) {
+      const line = src.slice(0, m.index).split('\n').length;
+      out.push({ at: `${file}:${line}`, head: m[2]!, declared: m[1] });
+    }
+  }
+  return out;
+}
+
+describe('③ `SURFACES` 里声明过的域，调用点必须带 surface 实参', () => {
+  test('前提：扫描器看得见东西，且认得出折行写法', () => {
+    const calls = collectApiCalls();
+    assert.ok(calls.length >= 30, `只扫到 ${calls.length} 个 api() 调用 —— 正则或 glob 坏了`);
+    // 定点校准：这三个必须被看见，否则下面那条是空转
+    for (const probe of ['backends', 'models', 'notes']) {
+      assert.ok(
+        calls.some((c) => c.head === probe),
+        `扫不到任何 /${probe}/… 的调用`,
+      );
+    }
+    // 折行写法：`/models/catalog` 那处的 surface 与路径分居两行
+    assert.ok(
+      calls.some((c) => c.head === 'models' && c.at.startsWith('src/lib/api/models.ts')),
+      '折行的 api(\n  surface,\n  path) 没被扫到 —— 换成按行匹配就会漏掉一大片',
+    );
+    /*
+     * 剥注释必须在工作：`lib/api/models.ts` / `lib/api/backends.ts` / `client.ts`
+     * 的文件头里**逐字**写着 `api('/models/installed')` 这种被禁的写法（它们在讲
+     * 这段历史）。不剥的话这条守卫会指着解释文字判红 —— 假红灯比没有门更坏。
+     */
+    const bare = /\bapi\s*\(\s*'\/models/;
+    assert.equal(bare.test(stripComments("// api('/models/installed')")), false, '行注释没剥掉');
+    assert.equal(bare.test(stripComments("/* api('/models/x') */")), false, '块注释没剥掉');
+    assert.equal(bare.test(stripComments("api('/models/x')")), true, '剥过头了，真调用也没了');
+  });
+
+  test('★ 裸调用不许出现在已声明的域上', () => {
+    const declared = new Set<string>(SURFACES as readonly string[]);
+    const offenders = collectApiCalls()
+      .filter((c) => c.declared === undefined && declared.has(c.head))
+      .map((c) => `  ${c.at}   →  api('/${c.head}/…')  ⇒  surface 'generic'`);
+
+    assert.deepEqual(
+      offenders,
+      [],
+      '这些调用属于一个**已经在 `SURFACES` 里声明过**的域，却没带 surface 实参：\n' +
+        offenders.join('\n') +
+        '\n⇒ 它们全部记在 `generic` 上，而那个面被顶栏的「已接通 N / 模拟 M」' +
+        '**刻意排除**；该域自己则永远停在 `unknown`，两个数里都不出现。' +
+        '\n于是"这块正在用假数据"这件事，在整个界面上没有任何一处说得出口。' +
+        "\n修法：把面名当第一个实参传进去 —— `api('backends', '/backends/installed')`。" +
+        "\n（面名**不必**等于路径首段：`api('import', '/notes/probe')` 是对的，" +
+        '标注按用户看到的那块分，不按 REST 路径分。）',
+    );
+  });
+
+  test('反面：扫出来的 surface 实参必须都是声明过的（拼错了不许静默变成新面）', () => {
+    const declared = new Set<string>(SURFACES as readonly string[]);
+    const bogus = collectApiCalls()
+      .filter((c) => c.declared !== undefined && !declared.has(c.declared))
+      .map((c) => `${c.at} → api('${c.declared}', …)`);
+    assert.deepEqual(bogus, [], `api() 用了没有声明的面：${bogus.join(', ')}`);
   });
 });

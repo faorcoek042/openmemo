@@ -12,8 +12,23 @@
  * | --- | --- | --- |
  * | `DownloadRow` 的本地 `formatEta()` | **漏了小时档** | 3 小时的下载，模型页说「剩余约 180 分钟」，同一个 job 的 toast 说「约 3 小时」 |
  * | `DownloadRow` 的 `Math.round(ratio*100)%` | 没有本地化、没有量纲检查、没有 `'—'` 兜底 | 越界时理直气壮地渲染一个数（#90 那个恒 `100%` 就是这么来的） |
- * | `TimeAnchor` 的 `formatTimecode()` | 今天等价 | 它一旦漂，**FTS 索引里的 `[12:34]` 和屏幕上的对不上，搜索静默地坏掉** |
+ * | `TimeAnchor` 的 `formatTimecode()` | 今天等价 | 它一旦漂，用户照着屏幕上的时间码搜自己的锚点会搜不到（**订正见下**） |
  * | `MockNotice` 的 `toLocaleTimeString(undefined,…)` | 用**浏览器** locale 而不是应用 locale | 中文界面里那一格按系统语言排版 |
+ *
+ * ⚠️⚠️ **订正（浏览器审计实测）**：上一版这里与下面的失败提示都写着
+ * 「`TimeAnchor.renderText()` 产出的 `[12:34]` **正是被 FTS 索引的那个字符串**」。
+ * **不是。** `renderText()` 的产物只到 `editor.getText()` 为止；
+ * `apps/daemon/src/http/rest/content.ts` 有 `bodyJson` 时会把客户端传的 `bodyText`
+ * **整个丢掉**（那条规则本身是对的），真正被 `notes_fts` 索引的是
+ * `apps/daemon/src/db/richText.ts` 的 `extractPlainText()` 的输出。
+ * 而那个提取器当时**根本不认识 `timeAnchor` 节点** ⇒ 锚点对索引的贡献是零：
+ * 屏幕上的 `0:04` 搜出 0 条，同一段里的普通文字搜出 1 条 `[实测]`。
+ *
+ * 现在两端调的是 `@openmemo/shared` 的**同一个** `timeAnchorText()`，
+ * 而"锚点进不进得了索引"由 `apps/daemon/src/db/richText.test.ts` 守着。
+ * `timecode()` 的实现也一并搬进了 `@openmemo/shared`（全仓当时有三份），
+ * 跨包的那道结构守卫在 `packages/shared/src/timecode.test.ts`；
+ * **本文件这条只管 `apps/web/src` 这一段**，它守的是"web 里不许再抄一份补零逻辑"。
  *
  * ── 判据都是"结构"，且都只会漏检、不会误伤 ───────────────────────────────────
  *
@@ -118,9 +133,11 @@ describe('★ 时间码只有一份实现（第二份会静默弄坏搜索）', 
       [],
       '`lib/format/` 之外出现了补零逻辑 —— 多半是又抄了一份时间码：\n' +
         show(hits) +
-        '\n⚠️ `TimeAnchor.renderText()` 产出的 `[12:34]` **正是被 FTS 索引的那个字符串**，' +
-        '而屏幕上那个来自另一次调用。两份实现一旦漂移，用户照着屏幕搜自己的锚点会搜不到，' +
-        '**没有任何一处报错**。请改用 `lib/format/time.ts` 的 `timecode()`。',
+        '\n⚠️ 时间码在这个产品里同时出现在三个地方：屏幕上（播放器 / 正文锚点）、' +
+        '导出的 `.md` 里、以及 **FTS5 索引里的 `body_text`**（那一份由 daemon 的 ' +
+        '`extractPlainText()` 推导）。三者必须逐字节相同，否则用户照着屏幕搜自己的锚点会搜不到，' +
+        '**没有任何一处报错**。请改用 `lib/format/time.ts` 的 `timecode()`' +
+        '（它转发到 `@openmemo/shared` 的 `formatTimecode()`，daemon 与 mindmap 用的是同一份）。',
     );
   });
 

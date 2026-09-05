@@ -26,7 +26,34 @@
  *
  * 这个取舍的方向是刻意选的：宁可索引里少一点装饰性字符，也不要因为看不懂某个
  * 自定义节点就让整篇笔记搜不到。提取器的失败模式必须是"降级"，不能是"抛异常"。
+ *
+ * ## ★ "少收一点装饰性字符"与"整块内容消失"是两回事（本轮实测修的就是这个）
+ *
+ * 上面那条取舍**成立的前提**是：被跳过的东西是装饰。而 M-7 的时间锚点
+ * （`timeAnchor`，TipTap 的 inline **atom** node）不是装饰 —— 它是屏幕上一块
+ * **有字的、用户读得出来的**内容，而它的文字是从 `attrs.startMs` **算**出来的，
+ * 节点本身既没有 `text` 子节点，也没有 `alt`/`title`/`label` 里的任何一个。
+ *
+ * 于是它对 `body_text` 的贡献**恰好为零**，浏览器审计实测到的后果是：
+ *
+ * | 页面上看到的 | 它是什么 | `/api/search` 命中 |
+ * | --- | --- | --- |
+ * | `0:04` | timeAnchor 节点 | **0** |
+ * | 同一段里的普通文字 | text 节点 | 1 |
+ * | `0:04`（当纯文本再打一遍） | text 节点 | 1 |
+ *
+ * 分词器和索引都是好的，**就是这个节点进不了索引**；而且没有任何一处报错 ——
+ * 用户只会觉得"搜索有时候找不到东西"。
+ *
+ * 修法是给它开一个**具名的、极小的**口子（见 `atomNodeText()`）：只认节点类型名，
+ * 只读一个数字属性，产出的字符串由 `@openmemo/shared` 的 `timeAnchorText()` 给
+ * —— 与前端 `TimeAnchor.renderText()` **调的是同一个函数**，不是"两份逐字相同的实现"。
+ *
+ * ⚠️ 这**不是**"把 TipTap 搬进 daemon"的第一步，界线写在这里：
+ * 口子只对**「可见文字由 attrs 算出来」的 atom node** 开。普通节点、marks、
+ * 装饰、schema 校验一律照旧不做。判据是"用户看得见吗"，不是"我们认不认识它"。
  */
+import { TIME_ANCHOR_NODE_TYPE, timeAnchorText } from '@openmemo/shared';
 
 /**
  * 块级节点：它们之间必须插换行。
@@ -53,6 +80,35 @@ const BLOCK_TYPES: ReadonlySet<string> = new Set([
  * 它们会往索引里灌 base64、blob: 和一堆无意义 token。
  */
 const TEXT_ATTRS: readonly string[] = ['alt', 'title', 'label'];
+
+/**
+ * 可见文字**由 attrs 算出来**的 atom node —— 唯一需要"认识"的一类节点。
+ *
+ * 返回 `undefined` 表示"不是这一类，按老规矩处理"。
+ *
+ * ⚠️ **产出的字符串必须与前端画在屏幕上的逐字节相同**，所以这里不许出现任何
+ * 拼接或格式化逻辑，只能调 `@openmemo/shared` 里那一份。
+ * 前端 `apps/web/src/features/notes/TimeAnchor.ts` 的 `renderText()`
+ * 调的是**同一个 `timeAnchorText()`** —— 于是"两端漂移"这件事在结构上不再可能发生，
+ * 而不是靠两边各写一遍再拿测试比对。
+ *
+ * ⚠️ 这里**不收** `attrs.quote`（锚点引用的那句转写原文）。理由不是"忘了"：
+ * `quote` 是 `hit.text.slice(0, 200)`，即某个 `transcript_segments.text` 的前缀，
+ * 而那张表**整张都在 `segments_fts` 里**、用的是同一个分词器 —— 也就是说
+ * 搜 quote 里的词今天**已经能搜到这条笔记**，且那条命中带着 `startMs`
+ *（点了会跳到那一秒），比 `startMs: null` 的笔记命中**更有用**。
+ * 再往 `body_text` 里灌一份，只会为同一次查询多出一条更差的重复结果，
+ * 而且那些字**在笔记正文里根本看不见**（锚点只画时间码）。
+ * ⚠️ 这个结论有前提：`quote` 是转写稿的逐字前缀。哪天重转写让两者不再一致
+ *（D-02 §3.5 的重定位场景），它就不再冗余，那时应该重新判一次。
+ */
+function atomNodeText(
+  type: string,
+  attrs: Record<string, unknown> | undefined,
+): string | undefined {
+  if (type !== TIME_ANCHOR_NODE_TYPE) return undefined;
+  return timeAnchorText(Number(attrs?.['startMs'] ?? 0));
+}
 
 /** 深度上限。超过就停止下钻（不抛异常，只是不再往下看）。 */
 const DEFAULT_MAX_DEPTH = 100;
@@ -160,6 +216,30 @@ function traverse(root: unknown, out: string[], maxLength: number): void {
     const text = rec['text'];
     if (typeof text === 'string') {
       if (text.length > 0) append(text);
+      continue;
+    }
+
+    /*
+     * ★ 可见文字由 attrs 算出来的 atom node（今天只有时间锚点）。
+     *
+     * 放在 `text` 判定之后：万一将来这类节点也带上了真的 `text`，那份更权威，
+     * 走上面那条即可，不会被这里覆盖掉。
+     *
+     * **不补前后换行**（与 `TEXT_ATTRS` 那条不同），因为它产出的就是屏幕上那个
+     * `[12:34]`，而方括号本身已经是分词边界：`[实测]` libsimple 的 simple 分词器下，
+     * 紧贴写法 `文字[1:28]文字` 与 `AUDITMARKanchors:[0:04]` 里，时间码与两侧的词
+     * 都能各自搜到，没有粘出假词。补换行反而会让服务端的投影与前端
+     * `editor.getText()` 复制出来的正文对不上。
+     */
+    const atomAttrs = rec['attrs'];
+    const atom = atomNodeText(
+      type,
+      atomAttrs !== null && typeof atomAttrs === 'object' && !Array.isArray(atomAttrs)
+        ? (atomAttrs as Record<string, unknown>)
+        : undefined,
+    );
+    if (atom !== undefined) {
+      append(atom);
       continue;
     }
 

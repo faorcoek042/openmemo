@@ -17,7 +17,7 @@
   ],
   "generatedAt": "2026-09-05",
   "generatedBy": "test-ratchet（事故：31d3ae3 静默删除 platformUnsupported.test.ts 191 行，7581cff 恢复）",
-  "floor": 183,
+  "floor": 184,
   "tracked": [
     "apps/daemon/src/bootstrap/entrypoint.test.ts",
     "apps/daemon/src/bootstrap/open-browser.test.ts",
@@ -201,6 +201,7 @@
     "packages/shared/src/diskUnknown.test.ts",
     "packages/shared/src/jobs.test.ts",
     "packages/shared/src/schemas.test.ts",
+    "packages/shared/src/timecode.test.ts",
     "packages/shared/src/toolchain.test.ts"
   ],
   "removed": []
