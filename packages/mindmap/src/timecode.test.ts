@@ -87,9 +87,19 @@ describe('formatTimestamp —— 基准向量', () => {
     assert.equal(formatTimestamp(Number.POSITIVE_INFINITY), '0:00');
   });
 
-  it('★ 与 apps/web 的 timecode() 同义 —— 这组向量是两边一致性的唯一契约', () => {
-    // packages/mindmap 不能 import apps/web，所以一致性只能靠同一组向量守。
-    // 改这里的期望值时，必须同时改 apps/web/src/lib/format/time.ts 的 timecode()。
+  it('★ 与 apps/web 的 timecode() 同义 —— 现在是同一个函数，不再靠同一组向量', () => {
+    /*
+     * ★ 订正：这条原来写着「这组向量是两边一致性的**唯一**契约」，理由是
+     * 「packages/mindmap 不能 import apps/web」。前半句对，结论错了 ——
+     * 复用的落点从来不是 `apps/web`，是 `@openmemo/shared`（本包已经依赖它）。
+     *
+     * 收敛之后 `formatTimestamp` / `apps/web` 的 `timecode()` / daemon 的
+     * `msToClock()` 三个名字都只是 `@openmemo/shared` 的 `formatTimecode()` 的转发，
+     * 一致性因此是**结构性的**，不再依赖两处向量各自被记得更新。
+     *
+     * 这组向量于是改守另一件事：**转发没转错、语义没被换掉**。
+     * 它仍然是 `.md` 导出这条链路上唯一的行为断言，所以不能删。
+     */
     assert.equal(formatTimestamp(754000), '12:34');
     assert.equal(formatTimestamp(0), '0:00');
   });

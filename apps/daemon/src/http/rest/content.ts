@@ -9,7 +9,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { toFreeMind, toMarkdown, toOpml, validate, type MindMapDoc } from '@openmemo/mindmap';
-import { makeEvent, topics, type NoteUpdatedEvent } from '@openmemo/shared';
+import { formatTimecode, makeEvent, topics, type NoteUpdatedEvent } from '@openmemo/shared';
 
 type NoteChange = NoteUpdatedEvent['changed'][number];
 
@@ -632,14 +632,19 @@ export function msToSrtTime(ms: number): string {
   return `${p(h)}:${p(m)}:${p(s)},${p(milli, 3)}`;
 }
 
+/**
+ * 转写稿 Markdown 导出里的 `**[1:23]**`。
+ *
+ * ★ **实现搬去了 `@openmemo/shared` 的 `formatTimecode()`，这里只剩转发。**
+ * 这一份此前是全仓第三份逐字相同的时间码（另两份：`apps/web` 的 `timecode()`、
+ * `packages/mindmap` 的 `formatTimestamp()`）。收敛的触发点是第四份 ——
+ * `db/richText.ts` 里那份产出的字符串**直接进 FTS5 索引**，与屏幕上那个漂了
+ * 就意味着"用户照着屏幕搜，搜不到"，而且不报错。
+ *
+ * 名字保留：`content.export.test.ts` 按这个名字断言导出的字节。
+ */
 export function msToClock(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) ms = 0;
-  const total = Math.floor(ms / 1000);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return h > 0 ? `${h}:${p(m)}:${p(s)}` : `${m}:${p(s)}`;
+  return formatTimecode(ms);
 }
 
 /**

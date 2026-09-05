@@ -46,6 +46,7 @@ export function useModelsCatalogQuery(role: ModelRole | 'all' = 'all', lang?: st
     queryKey: [...qk.models.catalog, role, lang ?? ''],
     queryFn: () =>
       api<GetCatalogResponse>(
+        'models',
         `/models/catalog?role=${role}${lang ? `&lang=${encodeURIComponent(lang)}` : ''}`,
       ),
     // 目录带 ETag 缓存，放宽 staleTime（app/query.ts 的约定）

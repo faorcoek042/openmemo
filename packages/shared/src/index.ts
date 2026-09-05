@@ -28,6 +28,7 @@ export * from './proxy.js';
 export * from './schemas.js';
 export * from './llm.js';
 export * from './media-extensions.js';
+export * from './timecode.js';
 
 export const PACKAGE_NAME = '@openmemo/shared' as const;
 

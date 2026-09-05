@@ -1,12 +1,16 @@
 /**
  * `extractPlainText` 测试。
  *
- * 关注两件事，其余都是次要的：
+ * 关注三件事，其余都是次要的：
  *   1. **块之间不许粘连** —— 粘连会往 FTS 索引里灌入跨块的假词，且无法察觉
  *   2. **恶意输入不许把进程搞死** —— 输入直接来自 HTTP 请求体
+ *   3. **用户在正文里看得见的字，必须进得了这份投影** —— 否则他搜不到，
+ *      而且不会有任何一处报错（时间锚点那一族，见下面带 ★ 的那个 describe）
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+
+import { timeAnchorText } from '@openmemo/shared';
 
 import { extractPlainText } from './richText.js';
 
@@ -260,6 +264,133 @@ describe('extractPlainText / attrs 里的文字', () => {
     assert.ok(extractPlainText({ type: 'mention', attrs: { label: '@张三' } }).includes('@张三'));
     const both = extractPlainText({ type: 'text', text: '真正的文字', attrs: { alt: '不该出现' } });
     assert.equal(both, '真正的文字');
+  });
+});
+
+/*
+ * ═════════════════════════════════════════════════════════════════════════════
+ * ★ 时间锚点：用户屏幕上看得见的那个 `0:04`，必须进得了 `body_text`
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * ## 这条守的是后果，不是形式
+ *
+ * `notes.body_text` 唯一的用途是喂 `notes_fts`（`notes_fts_ai` / `notes_fts_au`
+ * 两个触发器直接读这一列）。所以"某样东西进不了 `body_text`" = "用户搜不到它"。
+ *
+ * `[实测]` 浏览器审计的 A/B 对照，两次都是真的 `/api/search` 请求：
+ *
+ * | 页面上看到的 | 它在 `body_json` 里是什么 | 命中 |
+ * | --- | --- | --- |
+ * | `0:04` | `timeAnchor` 节点 | **0** |
+ * | 同一段里的普通文字 | `text` 节点 | 1 |
+ * | `0:04`（当纯文本再打一遍） | `text` 节点 | 1 |
+ *
+ * ⇒ 分词器与索引都是好的，就是这个节点进不了投影。
+ *
+ * ## 为什么用现场那条笔记的原样 JSON
+ *
+ * 手写一个"干净的"锚点会把最要命的两个细节洗掉：`startMs` 是**浮点**
+ *（`4706.022`，来自播放器的 `currentTime * 1000`），`quote` 是 **null**
+ *（那条录音的转写稿一段都没有 ⇒ `quoteAt()` 找不到覆盖该毫秒的段）。
+ * "锚点总是带 quote"这个想当然的前提站不住，而下游真有代码信了它
+ *（见 `segmentRepo.ts` 的 `replaceAnchors()`）。
+ *
+ * ## 把修法退回去它会红吗
+ *
+ * 会。删掉 `richText.ts` 里 `atomNodeText()` 那个口子（退回只认 `text` 与
+ * `alt`/`title`/`label`），下面第一条当场红 —— 那正是审计前的代码。
+ */
+describe('★ extractPlainText / 时间锚点（进不了这里 = 用户搜不到）', () => {
+  /** 审计现场 `audit-long.wav` 那条笔记 `body_json` 的原样片段（uid 01M1RY1FZ38EWNX5GQVW7ZYKBE）。 */
+  const AUDITED_DOC = {
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'AUDITMARKanchors:' },
+          {
+            type: 'timeAnchor',
+            attrs: {
+              anchorKey: 'anc_62373cbc-c4fd-41cc-9f46-4f35d075ef66',
+              startMs: 4706.022,
+              transcriptUid: '01M1RY1G6E7QHRXFYHGNQ7F2EN',
+              quote: null,
+            },
+          },
+          { type: 'text', text: ' ' },
+          {
+            type: 'timeAnchor',
+            attrs: {
+              anchorKey: 'anc_11ee5cd3-0cbd-4f10-a352-3d5e9060c539',
+              startMs: 39854.604999999996,
+              transcriptUid: '01M1RY1G6E7QHRXFYHGNQ7F2EN',
+              quote: null,
+            },
+          },
+          { type: 'text', text: ' ' },
+          {
+            type: 'timeAnchor',
+            attrs: {
+              anchorKey: 'anc_6fe2d951-3378-4baa-b71d-04477568fcbb',
+              startMs: 88305.031,
+              transcriptUid: '01M1RY1G6E7QHRXFYHGNQ7F2EN',
+              quote: null,
+            },
+          },
+          { type: 'text', text: ' TIMECODEPROBE0:04literal' },
+        ],
+      },
+    ],
+  };
+
+  it('★ 审计现场那条笔记：三个锚点的时间码都得出现在投影里', () => {
+    const out = extractPlainText(AUDITED_DOC);
+    // 审计当天 DB 里逐字是：'AUDITMARKanchors:   TIMECODEPROBE0:04literal'
+    assert.ok(out.includes('[0:04]'), `4706.022ms 的锚点没进投影：${JSON.stringify(out)}`);
+    assert.ok(out.includes('[0:39]'), `39854.6ms 的锚点没进投影：${JSON.stringify(out)}`);
+    assert.ok(out.includes('[1:28]'), `88305ms 的锚点没进投影：${JSON.stringify(out)}`);
+    // 同段的普通文字本来就进得去 —— 一并钉住，免得哪天"修好锚点"是靠把别的搞坏
+    assert.ok(out.includes('AUDITMARKanchors:'));
+  });
+
+  it('★ 投影里那个字符串与前端画在屏幕上的，是同一个函数产的', () => {
+    /*
+     * 不是同义反复：它钉的是"daemon 没有另外拼一份"。有人把 `timeAnchorText()`
+     * 换成就地 `` `[${…}]` ``、或者去掉方括号，这条会红 —— 而那种改动的真实后果
+     * 是"用户照着屏幕上的字搜、搜不到"，除此之外没有任何地方会报错。
+     */
+    for (const ms of [0, 4706.022, 88305.031, 3_600_000, 4_354_000]) {
+      const doc = { type: 'paragraph', content: [{ type: 'timeAnchor', attrs: { startMs: ms } }] };
+      assert.equal(extractPlainText(doc), timeAnchorText(ms), `startMs=${ms}`);
+    }
+  });
+
+  it('锚点与两侧的文字不粘成一个词', () => {
+    const doc = {
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: '他在这里说' },
+        { type: 'timeAnchor', attrs: { startMs: 88_000 } },
+        { type: 'text', text: '那句话' },
+      ],
+    };
+    assert.equal(extractPlainText(doc), '他在这里说[1:28]那句话');
+  });
+
+  it('attrs 缺失 / startMs 是垃圾值时降级成 [0:00]，不抛也不消失', () => {
+    // 提取器的失败模式必须是"降级"：一个坏锚点不该让整篇笔记搜不到
+    assert.equal(extractPlainText({ type: 'timeAnchor' }), '[0:00]');
+    assert.equal(extractPlainText({ type: 'timeAnchor', attrs: {} }), '[0:00]');
+    assert.equal(extractPlainText({ type: 'timeAnchor', attrs: { startMs: 'x' } }), '[0:00]');
+    assert.equal(extractPlainText({ type: 'timeAnchor', attrs: { startMs: -5 } }), '[0:00]');
+    assert.equal(extractPlainText({ type: 'timeAnchor', attrs: null }), '[0:00]');
+  });
+
+  it('反面：别的节点不许被顺手认成锚点', () => {
+    // 口子是**具名**的，只对 timeAnchor 开。写成"凡是带 startMs 的都收"，
+    // 将来任何一个带时间戳的内部节点都会被灌进索引。
+    assert.equal(extractPlainText({ type: 'someOtherAtom', attrs: { startMs: 4706 } }), '');
   });
 });
 

@@ -137,7 +137,7 @@ export { useBackendsCatalogQuery } from '../../lib/api/backends';
 export function useBackendsInstalledQuery() {
   return useQuery({
     queryKey: qk.backends.installed,
-    queryFn: () => api<GetInstalledBackendsResponse>('/backends/installed'),
+    queryFn: () => api<GetInstalledBackendsResponse>('backends', '/backends/installed'),
   });
 }
 
@@ -146,7 +146,7 @@ export function useBackendInstallMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<PullResponse>('/backends/install', {
+      api<PullResponse>('backends', '/backends/install', {
         method: 'POST',
         body: { id },
         idempotencyKey: `backend:${id}`,
@@ -170,9 +170,13 @@ export function useBackendRemoveMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<UninstallWithRefusalsResponse | undefined>(`/backends/${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-      }),
+      api<UninstallWithRefusalsResponse | undefined>(
+        'backends',
+        `/backends/${encodeURIComponent(id)}`,
+        {
+          method: 'DELETE',
+        },
+      ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.backends.installed });
       void qc.invalidateQueries({ queryKey: qk.backends.catalog });
@@ -185,7 +189,7 @@ export function useBackendSelectMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (backend: Backend) =>
-      api<{ selectedBackend: Backend }>('/backends/select', {
+      api<{ selectedBackend: Backend }>('backends', '/backends/select', {
         method: 'POST',
         body: { backend },
       }),
@@ -209,7 +213,7 @@ export function useBackendSelfTestMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<PullResponse>('/backends/selftest', { method: 'POST', body: { id } }),
+      api<PullResponse>('backends', '/backends/selftest', { method: 'POST', body: { id } }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.backends.installed });
     },

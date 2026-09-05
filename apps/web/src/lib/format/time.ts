@@ -3,16 +3,25 @@
  *
  * 媒体时间一律 **毫秒整数**（D-02 §1.1）——浮点秒在字幕对齐上会累积误差。
  */
+import { formatTimecode } from '@openmemo/shared';
 
-/** `754000` → `"12:34"`；超过 1 小时 → `"1:12:34"`。时间码不随 locale 变，是媒体惯例。 */
+/**
+ * `754000` → `"12:34"`；超过 1 小时 → `"1:12:34"`。时间码不随 locale 变，是媒体惯例。
+ *
+ * ★ **实现搬去了 `@openmemo/shared` 的 `formatTimecode()`，这里只剩转发。**
+ *
+ * 不是洁癖：同一个函数当时在仓里有**三份**（本文件、`packages/mindmap/src/timecode.ts`
+ * 的 `formatTimestamp()`、`apps/daemon/src/http/rest/content.ts` 的 `msToClock()`），
+ * 而本轮要加的**第四份**在 daemon 的 `db/richText.ts` 里 —— 那一份产出的字符串
+ * 会**直接进 FTS5 索引**。它与这里这一份一旦漂移，用户照着屏幕上的时间码搜自己的
+ * 锚点就会搜不到，且没有任何一处报错（这次的缺陷正是同族，只是更彻底：
+ * 那一份**根本没写**，锚点对索引的贡献是零）。
+ *
+ * 保留这个名字与这个入口，是因为 `apps/web` 有十几处在用它，而
+ * `lib/format/singleSource.test.ts` 那条结构守卫也按"格式化只许出现在 lib/format/"判。
+ */
 export function timecode(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) ms = 0;
-  const total = Math.floor(ms / 1000);
-  const s = total % 60;
-  const m = Math.floor(total / 60) % 60;
-  const h = Math.floor(total / 3600);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+  return formatTimecode(ms);
 }
 
 /**

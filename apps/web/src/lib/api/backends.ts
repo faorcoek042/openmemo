@@ -25,7 +25,7 @@ import { qk, STALE_TIME_OVERRIDES } from '../../app/query';
 export function useBackendsCatalogQuery() {
   return useQuery({
     queryKey: qk.backends.catalog,
-    queryFn: () => api<GetBackendCatalogResponse>('/backends/catalog'),
+    queryFn: () => api<GetBackendCatalogResponse>('backends', '/backends/catalog'),
     staleTime: STALE_TIME_OVERRIDES.catalog,
   });
 }
