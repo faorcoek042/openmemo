@@ -34,6 +34,8 @@
 
 import type { EngineUnavailableReason } from '@openmemo/shared';
 
+import { unreachable, type Translate } from '../../lib/wording';
+
 /**
  * 每一种「引擎用不了」该说哪句话。**总表**，四格一个都不许少。
  *
@@ -52,9 +54,6 @@ export const ENGINE_UNAVAILABLE_KEYS: Readonly<Record<EngineUnavailableReason['k
   engine_probe_text: 'asr.engineUnavailable.engineProbeText',
 };
 
-/** `t()` 的最小形状 —— 这个模块不引 React，方便直接对它写用例。 */
-type Translate = (key: string, params?: Record<string, unknown>) => string;
-
 /**
  * 一条 `EngineUnavailableReason` → 用户读得懂的那句话（当前语言）。
  *
@@ -71,22 +70,18 @@ export function engineUnavailableText(t: Translate, r: EngineUnavailableReason):
       return t(ENGINE_UNAVAILABLE_KEYS[r.kind], { envVar: r.envVar, dir: r.dir });
     case 'engine_probe_text':
       return t(ENGINE_UNAVAILABLE_KEYS[r.kind], { text: r.text });
+    /*
+     * 兜底取空串：这一处少一句解释，让录音页/模型页整块崩掉是更坏的结果。
+     *
+     * ★ 这一行**运行期也不可达**，而这不是总表给的保证 —— 是
+     * {@link normalizeEngineReason} 给的：进得了本函数的值都先过它。
+     * 总表守编译期、`normalize*` 守网线，**两道一起才够**（`lib/wording.ts` 抬头）。
+     * ⚠️ 别照抄 `features/runtime/reasonKeys.ts` 的同一行：那个模块**没有**第二条腿，
+     * 它的同一句话只在编译期成立。
+     */
     default:
-      return assertNeverEngineReason(r);
+      return unreachable(r, '');
   }
-}
-
-/**
- * 编译期穷尽性检查；**运行期不 throw**。
- *
- * 少写一条腿时 `tsc` 当场红（那是我们要的），但真跑到这一行（产品与 daemon
- * 版本错配）时，让录音页/模型页整块崩掉是更坏的结果。返回空串 ⇒ 这一处少一句解释，
- * 而**上面那张总表保证了这一行在编译得过的代码里不可达**。
- * 同 `features/runtime/reasonKeys.ts` 的 `assertNeverInapplicability`。
- */
-function assertNeverEngineReason(x: never): string {
-  void x;
-  return '';
 }
 
 /**

@@ -40,7 +40,7 @@ import type { LlmProviderConfig } from './api';
  * 本地两家排在其中最后，不会看起来像默认答案。
  */
 
-export const CATALOG_PROVIDERS: readonly LlmProviderSpec[] = (catalog.providers ??
+const CATALOG_PROVIDERS: readonly LlmProviderSpec[] = (catalog.providers ??
   []) as LlmProviderSpec[];
 
 const CATALOG_BY_ID = new Map<string, LlmProviderSpec>(CATALOG_PROVIDERS.map((p) => [p.id, p]));
@@ -152,7 +152,7 @@ export function adapterBaseUrl(spec: LlmProviderSpec): string {
   return raw;
 }
 
-export function providerSupport(spec: LlmProviderSpec): ProviderSupport {
+function providerSupport(spec: LlmProviderSpec): ProviderSupport {
   const wire = WIRE_KIND_BY_CATALOG_KIND[spec.kind];
   if (wire === null) return { supported: false, reason: 'kind' };
   /*
@@ -201,7 +201,7 @@ export interface CatalogPreset {
   refreshable: boolean;
 }
 
-export function presetOf(spec: LlmProviderSpec): CatalogPreset {
+function presetOf(spec: LlmProviderSpec): CatalogPreset {
   return {
     spec,
     config: presetConfigFor(spec),

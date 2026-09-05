@@ -21,7 +21,9 @@ import { NOTES_OFFLINE_REASON_ID } from './NotesOfflineReason';
  * ## 为什么这个文件到今天才出现
  *
  * 三条 mutation 早就写好了：`useDeleteNoteMutation` / `useRenameNoteMutation`
- * （`features/notes/api.ts`）与 `useMoveNoteMutation`（`features/folders/api.ts`），
+ * （`features/notes/api.ts`）与「移动到文件夹」那条（当时住在 `features/folders/api.ts`，
+ * 现在是本目录 `api.ts` 的 `useMoveNoteToFolderMutation` —— 分层护栏拦住了跨 feature
+ * import，那一份因此在这一侧重写，folders 那一侧的拷贝已删），
  * daemon 侧 `DELETE /api/notes/:uid`（软删除 + `note.deleted` 事件）与
  * `PATCH /api/notes/:uid {title}` 也都是真的。**缺的只有调用方** ——
  * 全仓对这三个 hook 的引用只有「定义」和「`index.ts` 再导出」两处。
@@ -175,7 +177,7 @@ export function NoteActionsMenu({ note }: { note: Pick<NoteDetail, 'uid' | 'titl
                 ★ 「移动到文件夹」放在**笔记自己的 ⋯ 菜单**里。
                 依据：用户是**站在一条笔记上**决定"把它收到哪儿去"的，
                 而不是先去文件夹页再回头找笔记。本文件的文件头本来就把
-                `useMoveNoteMutation` 列在同一批里 —— 它一直缺的就是这个入口。
+                「移动到文件夹」列在同一批里 —— 它一直缺的就是这个入口。
                 ⚠️ 就地展开一个列表，**不跳转** —— 不再制造
                 「按钮 navigate 到自己所在那一页」那种死按钮。
               */}

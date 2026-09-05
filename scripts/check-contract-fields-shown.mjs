@@ -93,7 +93,11 @@ const RULES = [
    */
   {
     field: 'cpuFeaturesUnverified',
-    dir: 'apps/web/src/components/common',
+    // ★ 唯一的读者是 `FitBadge`，它这一轮从 `components/common/` 搬到了
+    //   `features/models/components/`（只有 `features/models` 一个消费方，
+    //   摆在「共享层」里是虚报）。目录必须跟着搬 —— 不跟就变成一盏**恒红**的灯：
+    //   规则会去一个再也没有读者的目录里找那个字段。
+    dir: 'apps/web/src/features/models',
     why:
       '契约原话：`the UI must never render it as such`——「你的 CPU 不支持 AVX2」和' +
       '「我们没能查你的 CPU 有没有 AVX2」是两句不同的话，而 Windows 上只有后者为真' +

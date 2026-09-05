@@ -21,7 +21,7 @@ import { StatusChip } from '../../../components/common/StatusChip';
  * 那句解释搬进了卡片正文，走 `<Emphasis>` 正常渲染。
  */
 import { Emphasis } from '../../../components/common/Emphasis';
-import { BackendChip, type BackendChipState } from '../../../components/common/BackendChip';
+import { BackendChip, type BackendChipState } from './BackendChip';
 import { formatBytes } from '../../../lib/format/bytes';
 import { localizedName } from '../../../lib/format/localized';
 import {

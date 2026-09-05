@@ -363,8 +363,3 @@ function makeStop(): () => void {
     seqCursors.clear();
   };
 }
-
-/** 供调试面板显示。 */
-export function sseDebugInfo() {
-  return { started, isLeader, refCount, reconnectAttempts, lastFrameAt };
-}

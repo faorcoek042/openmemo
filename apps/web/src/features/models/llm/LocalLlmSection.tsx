@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, Radar } from 'lucide-react';
 
-import { Button } from '../Button';
-import { Emphasis } from '../Emphasis';
-import { ErrorBlock } from '../ErrorBlock';
+import { Button } from '../../../components/common/Button';
+import { Emphasis } from '../../../components/common/Emphasis';
+import { ErrorBlock } from '../../../components/common/ErrorBlock';
 import { useLlmDetectMutation, type LlmProviderConfig } from './api';
 
 /**

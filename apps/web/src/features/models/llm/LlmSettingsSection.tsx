@@ -11,10 +11,10 @@ import {
   Trash2,
 } from 'lucide-react';
 
-import { Button } from '../Button';
-import { Emphasis } from '../Emphasis';
-import { ErrorBlock } from '../ErrorBlock';
-import { MockNotice } from '../MockNotice';
+import { Button } from '../../../components/common/Button';
+import { Emphasis } from '../../../components/common/Emphasis';
+import { ErrorBlock } from '../../../components/common/ErrorBlock';
+import { MockNotice } from '../../../components/common/MockNotice';
 import {
   LLM_ACTIVE_KEY,
   LLM_DEFAULT_MODEL_KEY,

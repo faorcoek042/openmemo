@@ -8,8 +8,8 @@ import {
   type PurposeBindings,
 } from '@openmemo/shared';
 
-import { Button } from '../Button';
-import { ErrorBlock } from '../ErrorBlock';
+import { Button } from '../../../components/common/Button';
+import { ErrorBlock } from '../../../components/common/ErrorBlock';
 import {
   LLM_PURPOSES_KEY,
   readPurposeBindings,

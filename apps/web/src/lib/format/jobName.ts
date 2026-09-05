@@ -32,7 +32,7 @@
  *
  * ## 为什么住在 `lib/` 而不是 `features/models/`
  *
- * 消费方之一是 `components/common/JobToaster.tsx`，而 eslint（D-05 §3.5,
+ * 消费方之一是 `components/app-shell/JobToaster.tsx`，而 eslint（D-05 §3.5,
  * `eslint.config.js:82-99`）禁止 `lib/` 与 `components/` 依赖 `features/`。
  * 所以"id → 本地化名字"必须是一个**不认识任何 feature 的纯函数**，
  * 目录由调用方以 `lookup` 注入。这与 `stepLabel.ts` 是同一个形状：

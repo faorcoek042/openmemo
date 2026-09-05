@@ -139,7 +139,8 @@ export function useAsrEngines(
  * 用户能间接影响引擎选择的手段是**语言** —— 后端按语言自动选（中文走 Paraformer）。
  * 这条因果链写在 `TranscribeOptions` 的提示里。
  */
-export function AsrEngineStatus({ className }: { className?: string }) {
+// ★ 原来收一个 `className?`，唯一的调用点（`RecorderPage`）没传过。已删。
+export function AsrEngineStatus() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { engines, isLoading } = useAsrEngines();
@@ -150,7 +151,7 @@ export function AsrEngineStatus({ className }: { className?: string }) {
   const missing = engines.filter((e) => !e.available);
 
   return (
-    <div className={className} data-testid="asr-engine-status">
+    <div data-testid="asr-engine-status">
       <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-medium text-ink">{t('recorder.engineLabel')}:</span>
         {engines.map((e) => (

@@ -11,9 +11,9 @@ import {
   isSecureContext,
   localhostEquivalent,
 } from '../../lib/secure-context';
-import { Button } from './Button';
-import { Emphasis } from './Emphasis';
-import { worstTone, type StatusTone } from './statusTone';
+import { Button } from '../common/Button';
+import { Emphasis } from '../common/Emphasis';
+import { worstTone, type StatusTone } from '../common/statusTone';
 
 /**
  * 「能力未就绪」**唯一一条**横幅（T-107）。

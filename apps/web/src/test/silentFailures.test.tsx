@@ -28,14 +28,14 @@ import assert from 'node:assert/strict';
 import { QueryClient, useQuery } from '@tanstack/react-query';
 
 import { render, click, type, text, stubApi } from './host';
-import { ConnectionBanner } from '../components/common/ConnectionBanner';
+import { ConnectionBanner } from '../components/app-shell/ConnectionBanner';
 import { useConnectionStore } from '../lib/stores/connection.store';
 import { startSse, type ChannelLike, type EventSourceLike } from '../lib/events/source';
 import { systemSse } from '../lib/events/system.sse';
 import { DEGRADED_POLL_INTERVAL_MS, startDegradedPolling } from '../lib/events/degradedPolling';
 import { NoteActionsMenu } from '../features/notes/NoteActionsMenu';
 import { countUnfinishedJobs } from '../features/tasks/api';
-import { JobToaster } from '../components/common/JobToaster';
+import { JobToaster } from '../components/app-shell/JobToaster';
 import { bus } from '../lib/events/bus';
 import { notifyJobAttached } from '../lib/jobs/attachedNotice';
 import { useModelPullMutation } from '../features/models/api';

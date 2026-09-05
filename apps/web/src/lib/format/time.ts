@@ -24,23 +24,18 @@ export function timecode(ms: number): string {
   return formatTimecode(ms);
 }
 
-/**
- * SRT/VTT 用的完整时间码 `HH:MM:SS.mmm`（整数毫秒 → 无浮点误差，D-02 §3.6）。
+/*
+ * ★ 这里原来还有一个 `timecodeFull(ms)`（SRT/VTT 的 `HH:MM:SS.mmm`）。**已删。**
  *
- * ⚠️ **必须挡住 NaN/Infinity。**（本函数早期版本漏了这层，由
- * `apps/daemon/src/http/rest/content.export.test.ts` 逮到 —— 前端那份 `export.test.ts`
- * 随导出实现一起搬去了服务端，用例整套跟着搬，没有消失。）
- * `Math.max(0, Math.floor(NaN))` 仍是 `NaN`，会产出 `NaN:NaN:NaN,NaN` 写进字幕文件 ——
- * 而这在我们自己的 UI 里**完全看不出来**（转写稿照常显示），
- * 只有用户把 .srt 拖进播放器、发现整个文件失效时才会暴露。
+ * 它是一次搬家的残留：字幕导出连同它的整套用例都搬去了服务端
+ * （`apps/daemon/src/http/rest/content.ts` 的 `HH:MM:SS,mmm`，用例在
+ * `content.export.test.ts`），而前端这一份没人跟着删，从此零调用方。
+ *
+ * ⚠️ 它带的那条知识**没有丢，只是不在这里**：`Math.max(0, Math.floor(NaN))` 仍是 `NaN`，
+ * 会往字幕文件里写 `NaN:NaN:NaN,NaN`，而这在 UI 里完全看不出来（转写稿照常显示），
+ * 只有用户把 .srt 拖进播放器才发现整个文件失效。守着它的是服务端那份实现与用例。
+ * 前端再留一份**没有用例的拷贝**是负资产：它只会在某天被人接上时和服务端那份分叉。
  */
-export function timecodeFull(ms: number): string {
-  const t = Number.isFinite(ms) ? Math.max(0, Math.floor(ms)) : 0;
-  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-  return `${pad(Math.floor(t / 3600000))}:${pad(Math.floor(t / 60000) % 60)}:${pad(
-    Math.floor(t / 1000) % 60,
-  )}.${pad(t % 1000, 3)}`;
-}
 
 /** 人类可读时长，用于列表页："1 小时 47 分" / "1 hr 47 min"。 */
 export function humanDuration(ms: number, locale: string): string {

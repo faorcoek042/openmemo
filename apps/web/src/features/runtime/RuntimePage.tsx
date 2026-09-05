@@ -26,9 +26,15 @@ import {
  * 后端包的下载与模型下载走的是**同一个 `DownloadQueue`、同一份 `DownloadJob`**，
  * 所以它是同一件事，不是"长得像的另一件事"。
  *
- * ⚠️ 跨 feature 目录 import 是刻意的：宁可路径难看，也不要第五份实现。
- * （真要摆正，正解是把它提到 `components/common/` —— 那要动模型页的 import，
- *   而那一带此刻有别人在作业，见回执。）
+ * ⚠️ **订正**：这里原先写着「跨 feature 目录 import 是刻意的，宁可路径难看」，
+ * 并把"提到 `components/common/`"记成一件还没做、因为别人在作业所以做不了的事。
+ * **那件事早就做完了**：`DownloadRow` 住在 `components/common/DownloadRow.tsx`，
+ * 本 feature 的调用点在 `./components/BackendPackCard`，它 import 的就是共享层那一份，
+ * 没有任何一条跨 feature 的相对路径 —— 本文件甚至不再 import 它。
+ * 留着那句话的代价是具体的：它教下一个人"这里有一处刻意的横向依赖"，
+ * 于是他要么去找一个不存在的坏味道，要么照着它再写一处真的横向依赖。
+ * （护栏也不会替他挡住：`eslint.config.js` 那条 `features/A ↮ features/B` 只认
+ *   `../<兄弟feature>/` 这个形状，而 `components/common/` 本来就是允许的方向。）
  */
 import { useJobCancelMutation, useJobRetryMutation, useJobsQuery } from '../../lib/api/jobs';
 import { HardwareCard } from './components/HardwareCard';

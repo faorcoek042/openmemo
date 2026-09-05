@@ -38,12 +38,12 @@ const NEWER = (version: string, repo = 'yt-dlp/yt-dlp'): UpstreamCheck => ({
 
 import { TagEditor } from '../features/notes/TagEditor';
 import { NoteActionsMenu } from '../features/notes/NoteActionsMenu';
-import { useMoveNoteMutation } from '../features/folders/api';
+import { useMoveNoteToFolderMutation } from '../features/notes/api';
 import { SearchBox } from '../features/search/SearchBox';
 import SearchPage from '../features/search/SearchPage';
 import { JobList } from '../features/tasks/JobList';
-import { LlmSettingsSection } from '../components/common/llm/LlmSettingsSection';
-import { buildLlmSettingsPatch, LLM_PURPOSES_KEY } from '../components/common/llm/api';
+import { LlmSettingsSection } from '../features/models/llm/LlmSettingsSection';
+import { buildLlmSettingsPatch, LLM_PURPOSES_KEY } from '../features/models/llm/api';
 import {
   CATALOG_PRESETS,
   LLM_CATALOG_STATS,
@@ -52,7 +52,7 @@ import {
   baseUrlFieldMode,
   catalogProviderFor,
   presetConfigFor,
-} from '../components/common/llm/llm-catalog';
+} from '../features/models/llm/llm-catalog';
 import { useSaveMindmapMutation } from '../features/mindmap/api';
 import { applyCaption, RECORD_SAMPLE_RATE } from '../features/recorder/asrStream';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -147,7 +147,7 @@ import {
   PACK_SURFACE_OVERRIDES,
 } from '../features/runtime/reasonKeys';
 import { ComponentCard } from '../features/components/components/ComponentCard';
-import { FitBadge } from '../components/common/FitBadge';
+import { FitBadge } from '../features/models/components/FitBadge';
 import {
   getPositionMs,
   setPositionMs,
@@ -161,8 +161,8 @@ import { useConnectionStore } from '../lib/stores/connection.store';
 import {
   PurposeBindingsSection,
   mergePurposeBinding,
-} from '../components/common/llm/PurposeBindingsSection';
-import { ReadinessBanner } from '../components/common/ReadinessBanner';
+} from '../features/models/llm/PurposeBindingsSection';
+import { ReadinessBanner } from '../components/app-shell/ReadinessBanner';
 import RecorderPage from '../features/recorder/RecorderPage';
 import {
   copyText,
@@ -3697,8 +3697,8 @@ describe('LLM 模型选择：真下拉（T-126）', () => {
   });
 
   test('★ 两处复用同一个组件 —— 不许各写一遍（用户："该统一和复用的地方要统一复用"）', async () => {
-    const a = await readSource('components/common/llm/LlmSettingsSection.tsx');
-    const b = await readSource('components/common/llm/PurposeBindingsSection.tsx');
+    const a = await readSource('features/models/llm/LlmSettingsSection.tsx');
+    const b = await readSource('features/models/llm/PurposeBindingsSection.tsx');
     for (const [name, src] of [
       ['LlmSettingsSection', a],
       ['PurposeBindingsSection', b],
@@ -5021,10 +5021,10 @@ describe('T-132 组件与来源页', () => {
  * 禁掉标记等于把这些词降回正文。真正要挡的是**"写了没人渲染"**这个组合。
  */
 const EMPHASIS_REGISTRY: Record<string, string[]> = {
-  'settings.llmIntro': ['components/common/llm/LlmSettingsSection.tsx'],
+  'settings.llmIntro': ['features/models/llm/LlmSettingsSection.tsx'],
   /* T-153：D-10 #3「本地模型」折叠组的两句说明（`POST /api/llm/detect` 的消费方）。 */
-  'settings.local.intro': ['components/common/llm/LocalLlmSection.tsx'],
-  'settings.local.falsePositiveNote': ['components/common/llm/LocalLlmSection.tsx'],
+  'settings.local.intro': ['features/models/llm/LocalLlmSection.tsx'],
+  'settings.local.falsePositiveNote': ['features/models/llm/LocalLlmSection.tsx'],
   'models.detail.benchNone': ['features/models/ModelDetailPage.tsx'],
   'recorder.paraformerTradeoff': [
     'features/recorder/RecorderPage.tsx',
@@ -5995,7 +5995,7 @@ describe('T-135 ① 安全上下文：逐项说明必须真的渲染出来', () 
    * 自己旁边注释里的那句「走 `<Emphasis>`」—— 一条断言被自己的文档骗过去了。
    */
   test('★ ReadinessBanner 必须真的 import Emphasis（注释里提一句不算）', async () => {
-    const src = await readSource('components/common/ReadinessBanner.tsx');
+    const src = await readSource('components/app-shell/ReadinessBanner.tsx');
     // ⚠️ 用 assert.ok(regex.test(...))，不用 assert.match ——
     // 后者失败时会把**整份源码**打进报告，几十 KB 的噪声会盖掉真正的结论。
     assert.ok(
@@ -9426,18 +9426,25 @@ describe('T-155 笔记的删除 / 重命名入口', () => {
   });
 
   /**
-   * ★ 这条钉的是 `useMoveNoteMutation` 的端点。
+   * ★ 这条钉的是 `useMoveNoteToFolderMutation` 的端点。
    *
    * 它原来发 `PATCH /api/notes/:uid {folderUid}` —— 而 `rest/content.ts` 的 PATCH
    * 处理器**根本不读 `folderUid`**（只认 title/bodyJson/bodyText/summaryMd/language/anchors），
    * 然后照样回 200 `{ok:true}`。真实端点是 `PUT /api/notes/:uid/folder`
    * （`rest/organize.ts:419`）。**用一个最小组件把 hook 真的调一次**，
    * 而不是去 grep 源码里的字符串 —— 后者钉的是形式。
+   *
+   * ⚠️ **订正：这条腿原来钉的是另一份实现。**
+   * 它 import 的是 `features/folders/api` 的 `useMoveNoteMutation` —— 与这里这份
+   * **逐字相同、但零调用方**的一份拷贝（分层护栏拦住了 `NoteActionsMenu` 去 import 它，
+   * 于是 notes 那一侧照着又写了一份）。也就是说：**用户真正会走的那条路一条腿都没有，
+   * 而这条腿一直在给一份没人跑的代码作证。** 那份拷贝已删，本腿改钉权威那份。
+   * 这是「守卫钉错了对象」那一族 —— 它全程是绿的，绿得毫无意义。
    */
   test('★ 移动笔记打的是 PUT /notes/:uid/folder，不是 PATCH /notes/:uid', async () => {
     const { calls } = stubApi({ 'PUT /notes/n1/folder': { uid: 'n1', folderUid: 'f1' } });
     function Probe() {
-      const move = useMoveNoteMutation();
+      const move = useMoveNoteToFolderMutation();
       return (
         <button type="button" onClick={() => move.mutate({ noteUid: 'n1', folderUid: 'f1' })}>
           移动

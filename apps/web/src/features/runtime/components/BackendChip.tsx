@@ -11,7 +11,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type { Backend } from '@openmemo/shared';
-import { cn } from '../../lib/utils';
+import { cn } from '../../../lib/utils';
 
 /**
  * 加速后端状态芯片（CUDA / Vulkan / ROCm / Metal / CoreML / CPU）。
@@ -151,10 +151,10 @@ const STATE_STYLE: Record<
 export interface BackendChipProps {
   backend: Backend;
   state: BackendChipState;
-  className?: string;
 }
 
-export function BackendChip({ backend, state, className }: BackendChipProps) {
+// ★ 原来还有一个 `className?`，两个调用点（`HardwareCard` / `BackendPackCard`）都没传过。已删。
+export function BackendChip({ backend, state }: BackendChipProps) {
   const { t } = useTranslation();
   const s = STATE_STYLE[state];
   return (
@@ -162,7 +162,6 @@ export function BackendChip({ backend, state, className }: BackendChipProps) {
       className={cn(
         'inline-flex items-center gap-1.5 rounded-md border border-line bg-surface-1 px-2 py-1 text-xs font-medium',
         s.text,
-        className,
       )}
       data-testid={`backend-chip-${backend}`}
     >

@@ -18,7 +18,7 @@ depends_on: D-01, D-02, ADR-002, ADR-003, ADR-004, ADR-005, ADR-006, packages/sh
 - **设计令牌已用脚本实测校验**（非目测）：明/暗双档、状态色固定不随主题变、存储分解条的 4 个分段在明暗两档**全部 PASS**；明档 aqua/yellow 对比度 <3:1 → 强制配可见标签（图例已满足）。所有数值与校验输出见 §7。
 - 🔄 **§7.1 表层 / §7.2 品牌两张表已于 2026-08-03 回写更新**（T-124 实测 → T-131 裁决），原因是原表的"三级抬升"在明档实测两两只有 **1.03:1**，**从未真正存在过** —— 那不是一条被违反的规范，是一条描述了不存在事实的规范。变更说明与新判据见 **§7.1b**；四个状态锚点与 `--data-1..4` 未动。
 - **与 `packages/shared` 实际契约的 3 处差异 —— 全部已解决**：① 路由前缀 `/api` —— **D-01 已于 2026-08-02 订正**（D-01 §3.5，订正批次①），无分歧；② 错误信封 —— **D-01 §3.5 已改用实现版本** `{error:{code,message,messageZh,retryable,remediation}}`，不再是 RFC 9457；③ `SSE_EVENT_TYPES` **已补齐到 30 个**，F1–F5 全覆盖（`transcribe.started/partial/segment/done/replaced`、`mindmap.delta/done`、`note.created/updated/deleted`、`media.ready/media.asset.ready`、`record.state` 等均在，见 `packages/shared/src/events.ts:31`）。**此前这三条写着"需 Manager 裁决"，其中 ③ 写着"只有模型/下载域的 14 个事件，F1–F5 一个都没有"。**
-- **本次核实到一件必须上报的事**：**shadcn/ui 已于 2026-07-03 把默认底层库从 Radix 换成 Base UI**（`@base-ui/react` v1.6.0，一个包 vs Radix 的十几个包）。仓库里 `components/ui/SOURCE.md` 仍写着"底层依赖 Radix"，需订正，否则 ADR-002 决策 2 的"可追溯"豁免条件不成立。
+- **本次核实到一件必须上报的事**：**shadcn/ui 已于 2026-07-03 把默认底层库从 Radix 换成 Base UI**（`@base-ui/react` v1.6.0，一个包 vs Radix 的十几个包）。仓库里 `components/ui/SOURCE.md` 曾写着"底层依赖 Radix"，**已订正** —— 但不是改成 Base UI：`[实测]` 那个目录零组件、`pnpm-lock.yaml` 里两个库命中数都是 0，真实情况是**没有底层库**，写任何一个包名都是假话。§10-7 那条裁决仍然开着。
 - **基建缺口（已收敛到 1 项）**：路由库 ✅ 已装 `react-router@8.3.0`（**Data 模式**——v8 已移除 `react-router-dom`）；i18n ✅ 已装 `i18next@26.3.6` + `react-i18next@17.0.11`（**peer 版本强制联动**）；虚拟滚动 ✅ 已装 `@tanstack/react-virtual@3.14.9`。**仍缺 shadcn 底层库** —— `components/ui/` 至今只有 `SOURCE.md`，零组件，`pnpm-lock.yaml` 里 `base-ui`/`@radix-ui` 命中数为 0。**此前写着这四项全缺、全部"归 `oss-scout`，需补装"**。
 - **Tailwind v4 有个会静默坑人的限制**：`@theme{}` 里的变量不能嵌套在选择器/媒体查询中 → 明暗双档**必须**用 `:root`/`.dark` 定义语义变量 + **`@theme inline`** 转发；写成普通 `@theme` 会在定义处求值，**暗色永远不生效**（§7.5）。
 - **未验证/存疑**：本文无任何代码执行；Web Locks 在 Safari 的可用性、React 19 StrictMode 下的 EventSource 单例行为、虚拟滚动库选型仍未定（§9）。另已核实：**TanStack Query 没有官方 SSE 指南**，§2.3 的映射表是社区共识而非官方定式，已如实标注。
@@ -77,9 +77,12 @@ depends_on: D-01, D-02, ADR-002, ADR-003, ADR-004, ADR-005, ADR-006, packages/sh
 ② 它是 CLI 默认路径，`shadcn add` 不需要每次记得加 `-b radix`，**少一个静默出错的机会**（CI 里忘了传参会拿到另一套组件）。
 若 Manager 更看重 Radix 的成熟度，切换成本仅为 `init -b radix` + 按组件补 `@radix-ui/react-*`。**这是决策项（§10-7）。**
 
-> 📌 **需要订正的既有文件**：`apps/web/src/components/ui/SOURCE.md`（`oss-scout` 所有）当前写着
-> "底层依赖：Radix UI Primitives（MIT）"。无论最终选哪条路径，该行都需按实际情况更新，
-> 否则 ADR-002 决策 2 的"可追溯"豁免条件不成立。
+> 📌 ~~**需要订正的既有文件**~~ → **已订正**：`apps/web/src/components/ui/SOURCE.md` 当时写着
+> "底层依赖：Radix UI Primitives（MIT）"，而那个目录**一个组件都没有**，两个候选库在
+> `pnpm-lock.yaml` 里的命中数都是 0 —— 也就是说它描述的不是"选错了库"，是**一个不存在的依赖**。
+> 订正没有把它换成 Base UI（那只是把假话换个新版本，而且会抢在 §10-7 裁决之前），
+> 而是改写成「零组件 ⇒ 零底层依赖；第一个组件进来时按 CLI 实际拉的记进表格」。
+> 这样它**不会再过期**，ADR-002 决策 2 的"可追溯"条件也重新成立。
 
 ### 0.2 路由库选型 `[已核实版本，选型为设计建议]`
 
@@ -380,12 +383,18 @@ apps/web/src/
 │
 ├── components/
 │   ├── ui/                      ⬛ shadcn 豁免区（ADR-002 决策 2）——**只增不改**，改动须更新 SOURCE.md
+│   │                            ⚠️ **今天一个组件都没有**（目录里只有 `SOURCE.md`）。它是一条
+│   │                              **预先承诺**（"要用 shadcn 就只能落这里"），不是一层现存的 UI 库
+│   ├── app-shell/               ⬛ **应用外壳**：全局挂载件，唯一挂载点是 `App.tsx`
+│   │       JobToaster.tsx  jobToastModel.ts  ReadinessBanner.tsx  ConnectionBanner.tsx
+│   │                            （它们**不是**共享组件：没有任何 feature import 它们。
+│   │                              摆在 `common/` 里会让"共享层"的规模一直虚报 —— 见订正 3）
 │   └── common/                  ⬛ 共享业务组件（跨 feature 复用的才放这）—— 下面是**实际清单**
-│       ├── EmptyState.tsx  ErrorBlock.tsx  Banner.tsx  ReadinessBanner.tsx
-│       ├── StatusChip.tsx  ProgressMeter.tsx  RemediationButton.tsx  PanelBoundary.tsx
-│       ├── Emphasis.tsx  Button.tsx  MockNotice.tsx  JobToaster.tsx
+│       ├── EmptyState.tsx  ErrorBlock.tsx  Banner.tsx  StatusChip.tsx
+│       ├── ProgressMeter.tsx  RemediationButton.tsx  PanelBoundary.tsx  DownloadRow.tsx
+│       ├── Emphasis.tsx  Button.tsx  MockNotice.tsx  ListRow.tsx
 │       ├── AsrEngineStatus.tsx  AsrModelPicker.tsx  TranscribeOptions.tsx
-│       └── BackendChip.tsx  FitBadge.tsx  statusTone.ts  llm/
+│       └── UninstallResidueBanner.tsx  statusTone.ts  engineReasonText.ts  uninstallFailureText.ts
 │
 ├── features/                    ★★ 并行主战场：一个目录一个 owner，互不越界 ★★
 │   ├── capture/      T-021   F1/F2 捕获
@@ -421,6 +430,33 @@ apps/web/src/
 >    `AsrModelPicker` / `TranscribeOptions` / `statusTone.ts` / `llm/`。
 > 2. **`features/` 此前只列了 11 个**，实有 15 个目录：补上了 `components/`、`diagnostics/`、
 >    `folders/`、`onboarding/` 四个。
+> 3. **★ 第三处订正（本轮）：`components/common/` 里最大的几个文件，一个 feature 都没在复用。**
+>    上面订正 1 修的是"清单列了不存在的文件"；这一条修的是反向的病 ——
+>    **文件确实存在，"共享"这个属性是假的**。按"有多少个 feature 目录 import 它"实测：
+>
+>    | 原位置                                                               | 实际消费方                                                                 | 现位置                         |
+>    | -------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------ |
+>    | `common/llm/`（6 个文件）                                            | 只有 `features/models`（且只 import 其中 3 个，另 3 个是 `llm/` 内部互用） | `features/models/llm/`         |
+>    | `common/BackendChip.tsx`                                             | 只有 `features/runtime`                                                    | `features/runtime/components/` |
+>    | `common/FitBadge.tsx`                                                | 只有 `features/models`                                                     | `features/models/components/`  |
+>    | `common/{JobToaster,jobToastModel,ReadinessBanner,ConnectionBanner}` | **零个 feature**，只有 `App.tsx`                                           | `components/app-shell/`        |
+>
+>    对照组（真正被复用的那些）**都很小**：`Button` / `EmptyState` / `Banner` / `ErrorBlock`。
+>    也就是说**体积与复用度在这一层是反相关的** —— 这不是巧合，是 §3.3 规则 4
+>    （"被第二个 feature 需要时**才**提升，不要预先猜"）没有被执行时的典型形态：
+>    大而完整的东西看起来最"值得共享"，于是最先被提上来，然后再没有第二个消费方。
+>
+>    ⚠️ **搬走 `JobToaster` 那一组时新开了 `components/app-shell/`，不是塞回 feature。**
+>    它们确实不属于任何一个 feature（挂在外壳上，跨所有页面），
+>    但也确实不是"共享组件"。没有第三个抽屉时，它们只能待在 `common/` 里
+>    继续把这一层撑大 —— 而"共享层有多大"是别人做提升决策时的参照物。
+>
+>    ⚠️ 这四行搬家是**纯搬家**：零行为变更，只改 import 路径。
+>    连带改到的机器判据有三处（不改就是假红/假绿灯）：
+>    `scripts/check-contract-fields-shown.mjs` 里 `cpuFeaturesUnverified` 的 `dir`
+>    （唯一读者是 `FitBadge`，它搬了）、`scripts/test-ratchet-baseline.json`
+>    （`jobToastModel.test.ts` 改名，旧路径进 `removed` 并写明"不是删除"）、
+>    以及 `scripts/ci/{check,selftest}-comment-facts.mjs` 里写死的 `JobToaster.tsx` 路径。
 
 **每个 feature 内部的标准形状**（统一后，三个任务读彼此的代码不用重新学）：
 
@@ -485,8 +521,14 @@ features/*  ──可以──>  app/ · lib/ · components/ui · components/com
 features/A  ──禁止──>  features/B          ★ 横向依赖，需要复用就走"提升"
 components/ui ──禁止──> features/* · lib/api    （保持纯展示，可独立预览）
 components/common ──禁止──> features/*
+components/app-shell ──禁止──> features/*      ★ 与 common 同一条 eslint 规则（`components/**`）
 lib/*       ──禁止──>  features/* · components/*
 ```
+
+> ⚠️ `components/app-shell/` 在 eslint 里**不需要新规则**：`eslint.config.js` 那一块钉的是
+> `apps/web/src/{lib,components}/**`，`app-shell/` 天然落在里面。
+> 这也是它必须留在 `components/` 下、不能挪去 `app/` 的原因之一 ——
+> `app/` 不在那条 `no-restricted-imports` 的 `files` 里，搬过去等于**悄悄卸掉一条护栏**。
 
 用 `eslint` 的 `no-restricted-imports` + `patterns` 实现（规则由 T-021 落在 `eslint.config.js`，需向 `oss-scout` 申报，因为根配置归他）。
 **理由**：横向依赖是"三个人并行 → 一周后合不进去"的最常见死法。禁止它，复用只能走提升，提升要申报——冲突就被结构性消灭了。
@@ -1126,7 +1168,7 @@ v4 是 CSS-first 配置，但有一个**关键限制会直接影响我们**：
 | V-1  | Tailwind v4 `@theme` 写法、CSS 变量命名、暗色变体、是否需 `tailwind.config.js` | §7.5            | ✅ **已核实**（官方文档原文）。关键发现：`@theme` 不能嵌套 → 必须用 **`@theme inline` 两层结构**，否则暗色不生效                                                                                                                                                                                                                                                             |
 | V-2  | 路由库选型与版本                                                               | §0.2 / §1.2     | ✅ **已核实**：`react-router` **8.3.0**（v8 移除 `react-router-dom`，`RouterProvider` 改从 `react-router/dom` 导入）；`@tanstack/react-router` 1.170.18 可手写路由树。**建议 react-router v8 Data 模式**。**已补装并在用**（`apps/web/package.json` → `react-router@^8.3.0`；`apps/web/src/main.tsx:29` `createBrowserRouter(routes)`）。**此前写着"仍需 `oss-scout` 补装"** |
 | V-3  | i18n 库选型与版本                                                              | §6.1            | ✅ **已核实**：`react-i18next` 17.0.11 + `i18next` 26.3.6（**peer 强制 i18next ≥26.2.0**）；lingui / typesafe-i18n 均需编译步骤。**已补装**（`i18next@^26.3.6` + `react-i18next@^17.0.11`，`apps/web/src/app/i18n/locales/{zh-CN,en}` 已建）。**此前写着"仍需补装"**                                                                                                         |
-| V-4  | shadcn/ui 的底层依赖                                                           | §0.1            | ✅ **已核实，且结论出人意料**：默认底层库 2026-07-03 起为 **Base UI（`@base-ui/react` 1.6.0）**，非 Radix。Radix 仍可用（`init -b radix`）。**SOURCE.md 需订正**                                                                                                                                                                                                             |
+| V-4  | shadcn/ui 的底层依赖                                                           | §0.1            | ✅ **已核实，且结论出人意料**：默认底层库 2026-07-03 起为 **Base UI（`@base-ui/react` 1.6.0）**，非 Radix。Radix 仍可用（`init -b radix`）。**SOURCE.md 已订正**（改成如实的"零组件⇒零底层依赖"，不是改成 Base UI —— 包名要等 §10-7 裁决 + 真的装了才写）                                                                                                                    |
 | V-5  | `navigator.locks`（Web Locks）跨浏览器支持，特别是 Safari                      | §2.3 多标签选主 | **仍待核实**；有 BroadcastChannel 降级与"仅支持单标签"两条退路                                                                                                                                                                                                                                                                                                               |
 | V-6  | `wavesurfer.js` v7 的 `peaks` / `media` 选项                                   | §4.4 / §7.3a    | ✅ **已核实**：`peaks?: (Float32Array\|number[])[]`（二维，配 `duration`）与 `media?: HTMLMediaElement` 均存在 → 两项需求都满足。插件路径为 `[文档]` 级                                                                                                                                                                                                                      |
 | V-7  | React 19 + StrictMode 下 EventSource 单例行为                                  | §2.3            | 未验证                                                                                                                                                                                                                                                                                                                                                                       |
@@ -1150,7 +1192,10 @@ v4 是 CSS-first 配置，但有一个**关键限制会直接影响我们**：
 5. **多标签页策略**：Web Locks 选主（我建议）vs v1 只支持单标签（§2.3）。
 6. **路由前缀 `/api` 追认**与 D-01 相应订正（§8 差异 1/4/5）。
 7. **shadcn 底层库：Base UI（我建议，一个包）vs Radix（成熟，十几个包）**（§0.1）。
-   附带：`apps/web/src/components/ui/SOURCE.md` 里"底层依赖：Radix UI Primitives"一行需按裁决结果订正（归 `oss-scout`）。
+   附带：`apps/web/src/components/ui/SOURCE.md` 里"底层依赖：Radix UI Primitives"那一行**已先行订正**，
+   但订正的方向是"删掉这个假事实"而不是"填上裁决结果"：那个目录至今零组件，
+   现在写的是「零组件 ⇒ 零底层依赖，第一个组件进来时照 CLI 实际拉的记进表格」。
+   **本裁决项因此不再被一行假话拖着**，裁完之后也不需要回头改它。
 
 ---
 

@@ -14,7 +14,7 @@
  *
  * ## 为什么住在 `lib/`
  *
- * 消费方之一是 `components/common/JobToaster.tsx`，而 eslint（D-05 §3.5,
+ * 消费方之一是 `components/app-shell/JobToaster.tsx`，而 eslint（D-05 §3.5,
  * `eslint.config.js:82-99`）禁止 `lib/` 与 `components/` 依赖 `features/`，
  * 所以不能去 import `features/runtime/api` 里那份实现。
  * 与 `useModelCatalogNames` 同样的解法：把"读目录"降到 `lib/`，

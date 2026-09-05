@@ -18,10 +18,14 @@ import { Button } from './Button';
  *
  * ## T-140：它此前有 0 个 importer
  *
- * 这个文件从写完那天起就没有任何人 import 过 —— 26 个 `<ErrorBlock>` 全部没传
+ * 这个文件从写完那天起就没有任何人 import 过 —— **每一个** `<ErrorBlock>` 都没传
  * `onRemediate`，`JobToaster` 自己另写了一张路由表。「要求 2.1 的最后一环」
  * 从来没有渲染进任何一个页面。现在 `ErrorBlock` 与 `JobToaster` 都走它，
  * **路由表也收拢成 `lib/remediation/routes.ts` 一份**（原先两份给同一个 action 两个答案）。
+ *
+ * ⚠️ **订正**：这里原来写的是「26 个 `<ErrorBlock>` 全部没传」——`ErrorBlock.tsx` 里
+ * 同一个数字的第二份拷贝。数字早就不对了，而"每一个都没传"这个论断不依赖它。
+ * 一个被抄写到第二处的实测数，过期速度正好是它被抄写的份数倍。
  *
  * ## 两种模式
  *

@@ -48,7 +48,7 @@
       "name": "currentLocale"
     },
     {
-      "file": "apps/web/src/components/common/BackendChip.tsx",
+      "file": "apps/web/src/features/runtime/components/BackendChip.tsx",
       "name": "backendLabel"
     },
     {
@@ -87,24 +87,12 @@
       "name": "mockedSurfaces"
     },
     {
-      "file": "apps/web/src/lib/events/source.ts",
-      "name": "sseDebugInfo"
-    },
-    {
       "file": "apps/web/src/lib/events/types.ts",
       "name": "classOf"
     },
     {
-      "file": "apps/web/src/lib/format/time.ts",
-      "name": "timecodeFull"
-    },
-    {
       "file": "apps/web/src/lib/secure-context.ts",
       "name": "httpsEquivalent"
-    },
-    {
-      "file": "apps/web/src/lib/stores/progress.store.ts",
-      "name": "peekProgress"
     },
     {
       "file": "packages/db/src/extensions.ts",

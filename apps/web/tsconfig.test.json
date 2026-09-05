@@ -35,8 +35,8 @@
   "include": [
     "src/lib/stores/selectors.test.ts",
     "src/styles/tokens.contrast.test.ts",
-    "src/components/common/jobToastModel.test.ts",
-    "src/components/common/jobToastModel.ts",
+    "src/components/app-shell/jobToastModel.test.ts",
+    "src/components/app-shell/jobToastModel.ts",
     "src/lib/jobs/noteJobs.test.ts",
     "src/lib/jobs/noteJobs.ts",
     "src/lib/jobs/blockedReason.test.ts",
@@ -53,6 +53,7 @@
     "src/features/runtime/packAvailability.test.ts",
     "src/features/runtime/packStatus.ts",
     "src/lib/safe.ts",
+    "src/lib/wording.ts",
     "src/lib/remediation/routes.test.ts",
     "src/lib/remediation/routes.ts",
     "src/lib/api/notesCache.test.ts",

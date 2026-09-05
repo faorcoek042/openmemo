@@ -45,7 +45,7 @@ export function useJobsQuery() {
 }
 
 /** 还有没有没跑完的任务 —— 决定要不要继续兜底轮询。 */
-export function hasUnfinishedJob(data: GetJobsResponse | undefined): boolean {
+function hasUnfinishedJob(data: GetJobsResponse | undefined): boolean {
   return (data?.jobs ?? []).some(
     (j) => !(TERMINAL_JOB_STATES as readonly string[]).includes(j.state),
   );

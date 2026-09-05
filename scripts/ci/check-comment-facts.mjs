@@ -483,7 +483,7 @@ function main() {
       read: (t) => constArrayFrom(t, 'KNOWN_BLOCKED_CODES'),
     },
     {
-      rel: 'apps/web/src/components/common/JobToaster.tsx',
+      rel: 'apps/web/src/components/app-shell/JobToaster.tsx',
       what: 'blockedFallbackName()',
       means: '「这是哪种任务」—— 填进 toast 标题的那个名字',
       read: fallbackNameCodesFrom,

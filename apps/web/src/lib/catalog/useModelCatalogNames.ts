@@ -3,7 +3,7 @@
  *
  * ## 为什么这个 hook 住在 `lib/` 而不是 `features/models/`
  *
- * 消费方之一是 `components/common/JobToaster.tsx`。eslint（D-05 §3.5,
+ * 消费方之一是 `components/app-shell/JobToaster.tsx`。eslint（D-05 §3.5,
  * `eslint.config.js:82-99`）禁止 `lib/` 与 `components/` 依赖 `features/`，
  * 所以它**不能**去 import `features/models/api` 里那个 `useModelsCatalogQuery`。
  * 上一个人正是卡在这里没动手。

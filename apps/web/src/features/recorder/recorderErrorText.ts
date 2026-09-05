@@ -27,6 +27,8 @@
 
 import type { RecorderErrorReason } from '@openmemo/shared';
 
+import { unreachable, type Translate } from '../../lib/wording';
+
 /**
  * 界面**真的要渲染**的那个联合 = 契约的六格 + 一格「对面没说」。
  *
@@ -44,9 +46,6 @@ export const RECORDER_ERROR_KEYS: Readonly<Record<RenderableRecorderError['kind'
   asr_worker_not_implemented: 'recorder.wsError.asrWorkerNotImplemented',
   not_reported: 'recorder.wsError.notReported',
 };
-
-/** `t()` 的最小形状 —— 这个模块不引 React，方便直接对它写用例。 */
-type Translate = (key: string, params?: Record<string, unknown>) => string;
 
 /** 说不出是哪一种时的那一格。单例，省得每条路径各造一个字面量。 */
 const NOT_REPORTED: RenderableRecorderError = { kind: 'not_reported' };
@@ -73,26 +72,22 @@ export function recorderErrorText(t: Translate, r: RenderableRecorderError): str
     case 'engine_error':
     case 'finalize_failed':
       return t(RECORDER_ERROR_KEYS[r.kind], { detail: r.detail });
+    /*
+     * 兜底取空串；真跑到这一行时让整张录音页崩掉是更坏的结果 —— 用户正在录音。
+     *
+     * ⚠️ 这里返回空串是安全的，**而且只因为一件事**：进入本模块的每一个值都先过
+     * {@link normalizeRecorderError}，它按白名单收口，凡是它不认得的一律变成
+     * `not_reported`。也就是说这一行在**运行期同样不可达** ——
+     * 上面那张总表守编译期，`normalizeRecorderError` 守运行期，两道一起才够。
+     * 谁要是绕开 `normalizeRecorderError` 直接把网线上的东西喂进来，这条保证就没了。
+     *
+     * ★ 这个模块是这一族里**两条腿都写全了**的样板（`lib/wording.ts` 抬头引的就是它）。
+     * 空串兜底本身**不是**可以随手照抄的东西：同族的 `reasonText` / `reasonKeys`
+     * 抄了这一行、却没有第二条腿，于是那两处的空白在版本错配时是真会出现的。
+     */
     default:
-      return assertNeverRecorderError(r);
+      return unreachable(r, '');
   }
-}
-
-/**
- * 编译期穷尽性检查；**运行期不 throw**。
- *
- * 抄 `assertNeverUpstreamFailure` 那一条：少写一条腿时 `tsc` 当场红（那是我们要的），
- * 但真跑到这一行时让整张录音页崩掉是更坏的结果 —— 用户正在录音。
- *
- * ⚠️ 这里返回空串是安全的，**而且只因为一件事**：进入本模块的每一个值都先过
- * {@link normalizeRecorderError}，它按白名单收口，凡是它不认得的一律变成
- * `not_reported`。也就是说这一行在**运行期同样不可达** ——
- * 上面那张总表守编译期，`normalizeRecorderError` 守运行期，两道一起才够。
- * 谁要是绕开 `normalizeRecorderError` 直接把网线上的东西喂进来，这条保证就没了。
- */
-function assertNeverRecorderError(x: never): string {
-  void x;
-  return '';
 }
 
 /**

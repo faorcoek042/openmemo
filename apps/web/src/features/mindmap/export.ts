@@ -19,7 +19,7 @@ import type { MindMapDoc } from '@openmemo/mindmap';
  */
 export type ImageFormat = 'svg' | 'png';
 
-export async function exportMindmapBlob(
+async function exportMindmapBlob(
   instance: MindElixirInstance,
   format: ImageFormat,
   opts: { noForeignObject?: boolean; injectCss?: string } = {},
@@ -32,7 +32,7 @@ export async function exportMindmapBlob(
 }
 
 /** 文件名安全化：用户提供的标题绝不能直接当文件名（D-01 §8.5 的同一条原则）。 */
-export function safeFileName(title: string, fallback = 'mindmap'): string {
+function safeFileName(title: string, fallback = 'mindmap'): string {
   const cleaned = Array.from(title)
     // 控制字符按码点过滤：比正则字符类可读，也不会触发 no-control-regex
     .filter((ch) => {

@@ -39,8 +39,7 @@ import {
   type ProxyProbeDetail,
 } from '@openmemo/shared';
 
-/** `t()` 的最小形状 —— 这个模块不引 React，方便直接对它写用例。 */
-type Translate = (key: string, params?: Record<string, unknown>) => string;
+import { isKnownKind, unreachable, type Translate } from '../../lib/wording';
 
 /** 一条探针细节的每一种成因该说哪句话。**总表**，四格一个都不许少。 */
 export const PROXY_PROBE_DETAIL_KEYS: Readonly<Record<ProxyProbeDetail['kind'], string>> = {
@@ -82,23 +81,18 @@ export function proxyProbeDetailText(t: Translate, d: ProxyProbeDetail): string 
       return t(key, { proxyUrl: d.proxyUrl, target: d.target });
     case 'probe_error_text':
       return t(key, { text: d.text });
+    /*
+     * 兜底取空串：那一行只是少了后半句细节，探针状态芯片与目标仍然在。
+     * 让整个代理面板崩掉是更坏的结果。
+     *
+     * ★ 这一行**运行期也不可达**，而这不是总表给的保证 —— 是
+     * {@link normalizeProbeDetail} 给的：进得了本函数的每一个值都先过它，
+     * 认不出的一律变成 `null`、根本到不了这里。总表守编译期、`normalize*` 守网线，
+     * **两道一起才够**（`lib/wording.ts` 抬头那一节；同族里有两个模块只有第一道）。
+     */
     default:
-      return assertNeverProbeDetail(d);
+      return unreachable(d, '');
   }
-}
-
-/**
- * 编译期穷尽性检查；**运行期不 throw**。
- *
- * 抄 `features/components/reasonText.ts` 的 `assertNeverUpstreamFailure`：
- * 少写一条腿时 `tsc` 当场红（那是我们要的），但真跑到这一行
- *（产品与 daemon 版本错配）时，让整个代理面板崩掉是更坏的结果。
- * 返回空串 ⇒ 那一行只是少了后半句细节，探针状态芯片与目标仍然在 ——
- * 而**上面那张总表保证了这一行在编译得过的代码里不可达**。
- */
-function assertNeverProbeDetail(x: never): string {
-  void x;
-  return '';
 }
 
 /**
@@ -116,14 +110,12 @@ function assertNeverProbeDetail(x: never): string {
 export function normalizeProbeDetail(raw: unknown): ProxyProbeDetail | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const o = raw as Record<string, unknown>;
-  const kind = o['kind'];
-  if (typeof kind !== 'string') return null;
-  // `hasOwnProperty.call` 而不是 `in`：`'toString' in KEYS` 是真的。
-  if (!Object.prototype.hasOwnProperty.call(PROXY_PROBE_DETAIL_KEYS, kind)) return null;
+  // `isKnownKind` 判的是总表**自有**的键（不是 `in`：`'toString' in KEYS` 是真的），
+  // 判完顺带把 `kind` 收窄成总表的那几格，不用再写一次 `as`。
+  if (!isKnownKind(PROXY_PROBE_DETAIL_KEYS, o['kind'])) return null;
   const str = (f: string): string | null => (typeof o[f] === 'string' ? (o[f] as string) : null);
 
-  // 上面那道 `hasOwnProperty` 已经把 kind 限死在总表的四个键上。
-  const k = kind as ProxyProbeDetail['kind'];
+  const k = o['kind'];
   switch (k) {
     case 'proxy_unreachable_not_sent':
     case 'proxy_refused_tunnel': {
@@ -142,14 +134,15 @@ export function normalizeProbeDetail(raw: unknown): ProxyProbeDetail | null {
       if (text === null) return null;
       return { kind: k, text };
     }
+    /*
+     * ⚠️ 这一处兜底是 `null` 而不是 `''`，**刻意与上面那个不同**：
+     * 这里产出的是**数据**（一条 `ProxyProbeDetail`），不是一句话。
+     * 造一个半空的对象出去，等于让下游渲染一句缺洞的话（`… no request was sent to  at all`）；
+     * `null` 说的是「这一行没有细节可显示」，那句在任何情况下都成立。
+     */
     default:
-      return assertNeverProbeDetailKind(k);
+      return unreachable(k, null);
   }
-}
-
-function assertNeverProbeDetailKind(x: never): null {
-  void x;
-  return null;
 }
 
 /**

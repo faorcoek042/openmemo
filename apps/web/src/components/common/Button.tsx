@@ -22,10 +22,14 @@ const button = cva(
         ghost: 'text-ink-secondary hover:bg-fill-hover hover:text-ink',
         danger: 'bg-critical-solid text-white hover:opacity-90',
       },
+      /*
+       * ★ 这里原来还有一档 `lg: 'h-11 px-5 text-base'`。**已删 —— 从没有任何调用点传过它。**
+       * 留着的成本不是几个字节，是它让"这套按钮有几个尺寸"这个问题有两个答案：
+       * 文档/读者以为有四档，界面上只存在三档。要加回来时先有那个调用点。
+       */
       size: {
         sm: 'h-7 px-2.5 text-xs',
         md: 'h-9 px-3.5',
-        lg: 'h-11 px-5 text-base',
         icon: 'size-8',
       },
     },

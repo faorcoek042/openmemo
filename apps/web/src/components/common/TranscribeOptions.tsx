@@ -24,12 +24,10 @@ import { AsrModelPicker } from './AsrModelPicker';
 export function TranscribeOptions({
   language,
   onLanguageChange,
-  showModel = true,
   engineForced = false,
 }: {
   language: string;
   onLanguageChange: (v: string) => void;
-  showModel?: boolean;
   /**
    * 调用方自己已经**显式指定了引擎**（`engineId` 会真的进请求体）。
    *
@@ -85,7 +83,14 @@ export function TranscribeOptions({
           />
         ) : null}
 
-        {showModel ? <AsrModelPicker className="flex items-center" /> : null}
+        {/*
+          ★ 这里原来是 `{showModel ? <AsrModelPicker …/> : null}`。**`showModel` 已删。**
+          它默认 `true`，而三个调用点（捕获页 / 录音页 / 重新转写）**没有一个传 false**
+          —— 也就是说"不显示模型选择器"这条分支从来没有渲染过。
+          一个不可达的分支不是灵活性：它让读的人以为存在一种"没有模型选择器"的形态，
+          于是改这一块时要替一个不存在的场景做设计。
+        */}
+        <AsrModelPicker className="flex items-center" />
       </div>
 
       {invalid ? (

@@ -22,6 +22,8 @@
 
 import type { BackendUnavailableKind, Inapplicability } from '@openmemo/shared';
 
+import { unreachable, type Translate } from '../../lib/wording';
+
 /**
  * 「为什么这些后端不可用」里，每一种成因该说哪句话。**总 `Record`** ——
  * `BackendUnavailableKind` 加一档而没人给它写话，**编译当场就红**。
@@ -74,9 +76,6 @@ export const INAPPLICABILITY_KEYS: Readonly<
   hardware_not_probed_yet: 'runtime.pack.inapplicable.hardwareNotProbedYet',
   backend_status_missing: 'runtime.pack.inapplicable.backendStatusMissing',
 };
-
-/** `t()` 的最小形状 —— 这个模块不引 React，方便直接对它写用例。 */
-type Translate = (key: string, params?: Record<string, unknown>) => string;
 
 /**
  * 「这个包为什么装不了」在**后端包卡片上**该怎么说 —— 与硬件卡**同因不同落点**。
@@ -132,19 +131,25 @@ export function inapplicabilityText(t: Translate, r: Inapplicability): string {
         ? head
         : `${head} ${t('runtime.pack.inapplicable.verbatimDetail', { detail: r.detail })}`;
     }
+    /*
+     * 兜底取空串（{@link unreachable} 的第二个参数）：这张卡少一行解释，
+     * 但卡片本身、包名、按钮状态都还在。让整张运行时页崩掉是更坏的结果。
+     *
+     * ⚠️ **订正：这里原先写着「上面那张总表保证了这一行在编译得过的代码里不可达」。**
+     * 那半句只对编译期成立，而它被当成了一条总的保证。运行期这一行**是可达的** ——
+     * 本模块没有 `normalize*`，`r` 是原样从响应里拿来的。参照
+     * `features/recorder/recorderErrorText.ts`：那个模块的同一行敢说"运行期同样不可达"，
+     * **只因为**它有 `normalizeRecorderError` 按白名单收口。两道一起才够，这里只有一道。
+     *
+     * ⚠️ 而且这一档还接不住最钝的那一种：`backend_unavailable` 这条腿走的是
+     * `UNAVAILABLE_REASON_KEYS[r.unavailableKind]` —— `kind` 认得、只有
+     * `unavailableKind` 是新的时候**根本进不来这里**，取出来的是 `undefined`，
+     * 于是 `t(undefined)`。本仓没开 `noUncheckedIndexedAccess`，`tsc` 看不见它。
+     *
+     * 本轮没修（补第二条腿要逐档论证兜底值、多半还要加词条，是一次独立改动）。
+     * 这一族的全貌记在 `lib/wording.ts` 抬头。
+     */
     default:
-      return assertNeverInapplicability(r);
+      return unreachable(r, '');
   }
-}
-
-/**
- * 编译期穷尽性检查；**运行期不 throw**。
- *
- * 少写一条腿时 `tsc` 当场红（那是我们要的），但真跑到这一行（产品与 daemon
- * 版本错配）时，让整张运行时页崩掉是更坏的结果。返回空串 ⇒ 这张卡少一行解释，
- * 而**上面那张总表保证了这一行在编译得过的代码里不可达**。
- */
-function assertNeverInapplicability(x: never): string {
-  void x;
-  return '';
 }

@@ -6,7 +6,7 @@ import type { ActiveSlotUnusable, CatalogGroupWithFitness, CatalogVariant } from
 import { Button } from '../../../components/common/Button';
 import { Emphasis } from '../../../components/common/Emphasis';
 import { StatusChip } from '../../../components/common/StatusChip';
-import { FitBadge, FitEta, FitGpuLayers } from '../../../components/common/FitBadge';
+import { FitBadge, FitEta, FitGpuLayers } from './FitBadge';
 import { formatBytes } from '../../../lib/format/bytes';
 import { localizedDescription, localizedName, pickLocalized } from '../../../lib/format/localized';
 import { useAsrEngines } from '../../../components/common/AsrEngineStatus';

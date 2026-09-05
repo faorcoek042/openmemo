@@ -103,7 +103,9 @@ export function pushProgress(snap: Omit<JobProgressSnapshot, 'at'>): void {
   flush();
 }
 
-/** 直接读快照，不订阅（给非响应式场景，如 canvas 绘制）。 */
-export function peekProgress(jobId: string): JobProgressSnapshot | undefined {
-  return useProgressStore.getState().byJob[jobId];
-}
+/*
+ * ★ 这里原来还有一个 `peekProgress(jobId)`，注释写着「给非响应式场景，如 canvas 绘制」。
+ * **已删** —— 全仓没有任何 canvas 绘制读它，零调用方。
+ * 真要有那种场景时，`useProgressStore.getState().byJob[jobId]` 就是它的全部实现，
+ * 一行的事；留一个替未来场景预先起好的名字，只会让人以为那个场景已经存在。
+ */

@@ -70,14 +70,13 @@ export function findActiveWord(words: readonly Word[], posMs: number): number {
  * 而真正变的只有一个 `<span>` 的 class。所以只有**当前活跃段**挂这个循环，
  * 且只在它真的有 `words` 时挂 —— 其余段一行 JS 都不跑。
  */
+// ★ 原来还有一个 `className?`，唯一的调用点（`SegmentRow`）没传过。已删。
 export function WordHighlight({
   words,
   fallbackText,
-  className,
 }: {
   words: readonly Word[] | null;
   fallbackText: string;
-  className?: string;
 }) {
   const [idx, setIdx] = useState(-1);
   const raf = useRef(0);
@@ -99,10 +98,10 @@ export function WordHighlight({
   }, [words]);
 
   // 没有词级时间戳（中文 Paraformer 路径）→ 整句渲染，由 WordLevelBadge 说明原因
-  if (!words || words.length === 0) return <span className={className}>{fallbackText}</span>;
+  if (!words || words.length === 0) return <span>{fallbackText}</span>;
 
   return (
-    <span className={className} data-testid="word-highlight">
+    <span data-testid="word-highlight">
       {words.map((w, i) => (
         <span
           key={`${w.s}-${i}`}

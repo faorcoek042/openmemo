@@ -488,8 +488,12 @@ export default function RecorderPage() {
             教训与 App.tsx 里那个 `pending` 分支同源：**临时保护必须与它保护的条件绑定，
             不能靠人记得回来删。** 这里改为常开，条件判断交给选择器自己 ——
             它在"一个模型都没装"时会自动渲染成 [去安装模型]，而不是一个空下拉框。
+
+            ★ **后续**：`showModel` 这个 prop 本身也已删除。改为常开之后三个调用点
+            全都取默认值 `true`，`false` 那一支再没有渲染过 —— 一个不可达的分支不是
+            灵活性，它只会让下一个人以为存在一种"没有模型选择器"的形态。
           */}
-          <TranscribeOptions language={language} onLanguageChange={setLanguage} showModel />
+          <TranscribeOptions language={language} onLanguageChange={setLanguage} />
 
           <p>
             ⓘ{' '}
