@@ -13,7 +13,11 @@ export interface SearchHit {
   noteTitle: string;
   /** 命中的转写段（有则可直达时间点），无则是笔记正文命中 */
   startMs: number | null;
-  /** 已带 <mark> 高亮的片段（由服务端的 simple_highlight 产出） */
+  /**
+   * 已带 `<mark>` 高亮的片段 —— **服务端转义过的 HTML**，由 FTS5 内置的 `snippet()`
+   * 加 `toMarkedHtml()` 产出（`apps/daemon/src/http/rest/search.ts`）。
+   * ⚠️ 原注释说的是 `simple_highlight`，那个函数全仓从未被调用过；见 `SearchPage.tsx`。
+   */
   snippet: string;
   score: number;
   kind: 'segment' | 'note' | 'mindmap_node';
