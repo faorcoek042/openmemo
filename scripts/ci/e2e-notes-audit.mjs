@@ -128,6 +128,7 @@ import {
   checkDeletedNoteWritesRejected,
   checkDeletionInvisible,
   checkExportEnvelope,
+  checkExportableBeforeDelete,
   checkFolderCreated,
   checkFolderFilter,
   checkLlmEndpointCalled,
@@ -1173,15 +1174,60 @@ try {
   // 媒体未加载完这一档的**服务端半条链**（见第 10 节）：现在就把它取下来。
   const freshDetail = await j(`/api/notes/${encodeURIComponent(newUid)}`);
 
+  /* ── ★ F5-a6 的夹具：删之前先让这条笔记**真的有一份导图** ────────────────────
+   *
+   * #90 抓到的 ⑤-a：F5-a6 的 export 那一格走的是一条从没生成过导图的哑笔记，
+   * 而导出路由对「笔记在、导图不在」也回 404（`NO_MINDMAP`）——
+   * **把软删守卫从导出路由整个抽掉，那一格照样绿。**
+   *
+   * Manager 2026-09-06 裁决"两条都做"：这里是夹具那一半。
+   *   · `PATCH /mindmap` 会 upsert（`mindmaps.save()` 不要求先存在），所以哑笔记也能有图；
+   *   · doc 直接复用主角笔记那份**已经被 PATCH 接受过**的结构，但**把 refs 全剥掉** ——
+   *     refs 里的 `transcriptUid` 属于另一条笔记，而 `quote` 有必填约束
+   *     （`packages/mindmap/src/validate.ts` 的 `REF_MISSING_QUOTE`）。
+   *     剥掉之后既不跨笔记引用，也不碰那条约束。
+   */
+  const donorDoc = JSON.parse(JSON.stringify(mmAfter.body.doc));
+  for (const key of Object.keys(donorDoc.nodes)) donorDoc.nodes[key].refs = [];
+  const seedMm = await j(
+    `/api/notes/${encodeURIComponent(newUid)}/mindmap`,
+    jsonReq({ doc: donorDoc }, 'PATCH'),
+  );
+  const liveExport = await j(
+    `/api/notes/${encodeURIComponent(newUid)}/export?what=mindmap&format=md`,
+  );
+  say(
+    `   为 F5-a6 给这条笔记 PATCH 了一份导图：HTTP ${seedMm.status}；` +
+      `活着时导出 HTTP ${liveExport.status}`,
+  );
+
   /*
-   * 🔴 **这条检查的名字比它做的事多一半**（登记，本轮不改判据）：
+   * ★ **非空虚前提**，单独判红：PATCH 悄悄失败的话，删后那个 404 又只可能是
+   *   `NO_MINDMAP`，于是 F5-a6 的错误码那一格会**恒红**，把"夹具没造出来"
+   *   报成"产品退化了"。两个方向都得有人看见。
+   */
+  await check('F5-a3b ★ 前提：这条笔记活着的时候导出真的回 200（F5-a6 才问得出东西）', () => {
+    judge(
+      checkExportableBeforeDelete({
+        status: liveExport.status,
+        contentType: liveExport.headers['content-type'],
+        body: typeof liveExport.body === 'string' ? liveExport.body : liveExport.text,
+      }),
+    );
+    return `PATCH ${seedMm.status} → 导出 200`;
+  });
+
+  /*
+   * 🔴 **这条检查的名字比它做的事多一半**（Manager 2026-09-06：这一轮别改 id，但必须注明）：
    *   id 说「PUT /star **与 PUT /folder** 各自生效」，而函数体里**一个字都没提 folder**。
    *   `PUT /folder` 真正被验到是在第 8 节的 F5-b1（建文件夹 → 移入 → 按 folder 筛）。
    *   ⇒ 把 `PUT /folder` 整条路由弄坏，这一格照样绿，而总表上它的名字仍然写着 folder。
    *   本仓四种失效形态里的第④种：**注释型断言 —— 声称一件从没发生的事**。
    *
-   * ⚠️ 只改名字不动判据是最小修法，但 id 会进凭证与总表，改它要跟 attest 那侧对一遍，
-   *   不在这一轮的范围（这一轮是让判据可测）。已上报。
+   * ⚠️ id 会进**凭证**与总表，改它要跟 attest 那侧对一遍，所以这一轮不动 id。
+   *   但**不许让一个进凭证的 id 继续说它没做过的事** —— 所以那半话
+   *   写进了这一格的 `detail`（`detail` 与 id 一起进 `results[]`、一起被打印），
+   *   读总表的人看得见"folder 那一半今天没断"。
    */
   await check('F5-a3 PUT /star 与 PUT /folder 各自生效', async () => {
     const s = await j(
@@ -1196,7 +1242,7 @@ try {
         rereadStarred: g.body?.starred,
       }),
     );
-    return 'starred=true';
+    return 'starred=true（⚠️ id 里的 `PUT /folder` 那一半**这一格没断** —— 它在 F5-b1）';
   });
 
   // 删之前先埋一个只属于这条笔记的词，好验"删完搜不到"。
@@ -1268,19 +1314,19 @@ try {
       );
       const exp = await j(`/api/notes/${encodeURIComponent(newUid)}/export?what=mindmap&format=md`);
       /*
-       * 🔴 `exportStatus` 那一格今天**证明不了任何东西**（登记在
-       *    `checkDeletedNoteWritesRejected()` 的注释里，判据没动）：
-       *    这条哑笔记从来没生成过导图，`content.ts` 对"笔记在、导图不在"也回 404
-       *    （`NO_MINDMAP`）。把软删守卫从导出路由整个抽掉，这一格照样绿。
+       * ✅ #90 的 ⑤-a 已修（Manager 2026-09-06 裁决"两条都做"）：
+       *   ① 这条笔记在删之前**真的有一份导图**（上面 F5-a3b 当场断言过活着时导出回 200）；
+       *   ② 错误码一起钉 —— `NO_MINDMAP` 与软删守卫都回 404，不分码就分不开。
        */
       judge(
         checkDeletedNoteWritesRejected({
           patchStatus: patch.status,
           starStatus: star.status,
           exportStatus: exp.status,
+          exportBody: exp.body,
         }),
       );
-      return 'PATCH / PUT star / export 全是 404';
+      return `PATCH / PUT star / export 全是 404（导出那格的码是 ${ERROR_CODES.noteNotFound}，不是 ${ERROR_CODES.noMindmap}）`;
     },
   );
 

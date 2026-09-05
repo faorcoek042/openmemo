@@ -352,22 +352,47 @@ export function checkRefTimestamps({ ref, seg }) {
  *
  * 只比前 60 个字符：模型可能把一段长引文截短，但**开头不许换**。
  *
- * ## 🔴 已知空转：`quote` 为空（或全是空白）时这一格恒真（登记，本轮不改）
+ * ## ✅ 已修（#90 抓到的 ⑤-b，Manager 2026-09-06 裁决"立刻修，一行"）
  *
- * `joined.includes('')` 在 JS 里**永远是 true**。也就是说产品把 `quote` 发成空串、
- * 或者干脆不发这个字段（`String(undefined ?? '')` 也是空串），这一格照样绿 ——
- * 而那恰恰是它要防的最坏情况：**重转写之后这条 ref 永久失效，
- * 用户点进去跳到一个不存在的位置**。第①类失效：断言的东西在缺陷状态下也成立。
+ * 这一格**曾经是空转的**：`joined.includes('')` 在 JS 里**永远是 true**，
+ * 所以产品把 `quote` 发成空串、或者干脆不发这个字段
+ * （`String(undefined ?? '')` 也是空串），这一格照样绿 ——
+ * 而那恰恰是它要防的最坏情况：**重转写之后这条 ref 永久失效**。
+ * 第①类失效：断言的东西在缺陷状态下也成立。现在由下面第一格挡住。
  *
- * ⚠️ 判据**没有动**（行为等价是这一轮的硬要求）。修法是加一行
- * `must(quote.length > 0, …)`，但那会把一条今天绿的断言变成可能红的 ——
- * 属于「改判什么」，需要 owner 裁决。自检里对这条空转有**正面记录的用例**
- * （空 quote 今天判绿），裁决之后把那条用例翻过来即可。
+ * ## ⚠️ 顺带判的那件事：产品发空 `quote`「是不是一个真缺陷」—— **今天不可达**
+ *
+ * 不是。`packages/mindmap/src/validate.ts` 已经挡住了两条产出路径：
+ *
+ * ```ts
+ * if (!ref.quote || ref.quote.trim().length === 0) {
+ *   add('REF_MISSING_QUOTE', 'refs[].quote 必填，否则重转写后无法重定位', key);
+ * }
+ * ```
+ *
+ * 生成（`refFromIndices` → `validate`）与用户 PATCH（`content.ts` 写库前必校验）
+ * 都过这一关，所以**空 quote 落不了库**。D-02 §3.5 那条设计约束今天有实现在守。
+ *
+ * ⇒ 这一格的价值是**纵深**：它盯的不是"产品今天会不会发空 quote"，
+ *   而是"`validate.ts` 那道闸哪天被放松了，端到端这一层还看不看得见"。
+ *   自检里有一条**契约漂移守卫**正面核 `REF_MISSING_QUOTE` 还在不在 ——
+ *   那道闸没了而这里也没牙齿，就是两层同时哑掉。
  */
 export function checkRefQuoteVerbatim({ ref, segments, transcriptUid }) {
   const joined = (segments ?? []).map((s) => String(s?.text ?? '').trim()).join(' ');
   const quote = String(ref?.quote ?? '').trim();
   return all([
+    /*
+     * ★ 这一格**必须排在 includes 之前**：`includes('')` 恒真，
+     *   空 quote 走到下一格就再也拦不住了（这正是它曾经空转的原因）。
+     */
+    () =>
+      must(
+        quote.length > 0,
+        'refs[0].quote 是空的（或全是空白）—— 重转写之后这条 ref 永久失效，' +
+          '用户点进去会跳到一个不存在的位置。' +
+          `上游 validate.ts 的 REF_MISSING_QUOTE 本该挡住它，实得 ${brief(ref?.quote)}`,
+      ),
     () =>
       must(
         joined.includes(quote.slice(0, 60)),
@@ -628,27 +653,65 @@ export function checkNoteGone({ status, body }) {
  * `noteByUid` 有 10 个调用点，全是 API 入口。只验 GET 的话，
  * 「已删除的笔记还能被继续编辑」这一半仍然没人看着。
  *
- * ## 🔴 已知空转：`exportStatus` 那一格今天证明不了任何东西
+ * ## ✅ 已修（#90 抓到的 ⑤-a，Manager 2026-09-06 裁决"两条都做"）
  *
- * 审计跑这一格用的笔记是**一条刚导入、从来没生成过导图的哑笔记**。
- * `content.ts` 的导出路由在笔记查得到时也会回 `404 NO_MINDMAP`
- * （`mindmaps.latestOfNote(note.id)` 为空那一支）。于是：
+ * `exportStatus` 那一格**曾经证明不了任何东西**：审计跑它用的是一条刚导入、
+ * 从来没生成过导图的哑笔记，而 `content.ts` 的导出路由在**笔记查得到**时
+ * 也会回 `404 NO_MINDMAP`（`mindmaps.latestOfNote(note.id)` 为空那一支）。
+ * 于是它分不开「已删除的笔记被拒了」和「这条笔记本来就没有导图」——
+ * **把软删守卫从导出路由上整个抽掉，这一格照样绿。**
  *
- *   **把软删守卫从导出路由上整个抽掉，这一格照样绿。**
+ * 两条修法都做了，缺一不可：
  *
- * 它分不开「已删除的笔记被拒了」和「这条笔记本来就没有导图」——
- * 本仓第①类失效：**断言的东西在缺陷状态下也成立**。
+ *   ① **夹具**：审计在删之前先给那条笔记 PATCH 一份导图（`PATCH /mindmap` 会
+ *      upsert，`mindmaps.save()` 不要求先存在），并**当场断言活着的时候导出真的
+ *      回 200** —— 没有这一句，PATCH 悄悄失败就会把空转原样换一个形状回来；
+ *   ② **判据**：连错误码一起钉。只做①不够 —— `NO_MINDMAP` 与软删守卫今天都回
+ *      404，不分码的话下一个人换个夹具就又踩回去。
  *
- * ⚠️ 判据**没有动**（抽出这一轮的硬要求是行为等价）。要修有两条路，都不在这一轮：
- *   ① 换一条**真有导图**的笔记走这一格（主角笔记有），那时 404 才只可能来自软删；
- *   ② 或者连错误码一起钉（`NOTE_NOT_FOUND` ≠ `NO_MINDMAP`），那是最小改动。
- * 两条都要改夹具或判据，需要 owner 裁决。已登记，别当它是绿的。
+ * ⚠️ `exportCode` 传 `null` 会退回只钉状态码那一版（也就是那个空转）。
+ *    调用方**没有一处**这样传；自检里有一条 `☑ 独占` 用例正面钉住"不分码就抓不住"。
  */
-export function checkDeletedNoteWritesRejected({ patchStatus, starStatus, exportStatus }) {
+export function checkDeletedNoteWritesRejected({
+  patchStatus,
+  starStatus,
+  exportStatus,
+  exportBody,
+  exportCode = ERROR_CODES.noteNotFound,
+}) {
   return all([
     () => same(patchStatus, 404, '改标题的状态码'),
     () => same(starStatus, 404, '打星标的状态码'),
     () => same(exportStatus, 404, '导出的状态码'),
+    () =>
+      exportCode === null
+        ? yes()
+        : same(
+            exportBody?.error?.code,
+            exportCode,
+            `导出的错误码（${ERROR_CODES.noMindmap} ≠ ${ERROR_CODES.noteNotFound}：` +
+              '「这条笔记不存在」和「这条笔记没有导图」都是 404，不分码就分不开）',
+          ),
+  ]);
+}
+
+/**
+ * **非空虚前提**：这条笔记**活着的时候导出真的回 200**。
+ *
+ * 没有它，上面那条判据会换一个形状退回空转：夹具那半（删之前 PATCH 一份导图）
+ * 一旦悄悄失败，删后拿到的 404 又只可能是 `NO_MINDMAP` —— 而错误码那一格
+ * 会因此**恒红**，把"夹具没造出来"报成"产品退化了"。两个方向都要有人看见。
+ */
+export function checkExportableBeforeDelete({ status, contentType, body }) {
+  return all([
+    () =>
+      same(
+        status,
+        200,
+        '删之前导出这条笔记的状态码 —— 前提是它**真的有导图**，否则 F5-a6 的错误码那一格问不出东西',
+      ),
+    () => same(contentType, EXPORT_EXPECTATIONS.md.ct, '删之前导出的 content-type'),
+    () => must(String(body ?? '').length > 0, '删之前导出的正文是空的 —— 这份导图是个空壳'),
   ]);
 }
 
@@ -1059,26 +1122,38 @@ export function checkToolProbesUsable({ status, checks }) {
 /**
  * 把 `tool.*` 自检项分成三档：自己装的 / 借宿主 PATH 的 / 装不上。
  *
- * ## 🔴 已知弱点：`borrowed` 那一档是**拿散文当判据**（登记，本轮不改）
+ * ## 🔴🔴 已知弱点，**判据今天靠的是散文匹配** —— 别以为它可靠
  *
- * 判据是 `status === 'warn' && /PATH/i.test(detail)`，而 `detail` 是 daemon 写给人看的
- * 一句中文（`packages/runtime/src/selfcheck.ts`：
+ * Manager 2026-09-06 裁决：**这一条最严重，但不在这一路修**
+ * （正解要动 `apps/daemon`，而另一路正在动那儿）。所以这里**只留记号**，
+ * 条目在 `scripts/ci/check-pending-claims.mjs`（`tool.* 的"借宿主的"靠散文认`）。
+ *
+ * 判据是 `status === 'warn' && /PATH/i.test(detail)`，而 `detail` 是 daemon
+ * **写给人看的一句中文**（`packages/runtime/src/selfcheck.ts`：
  * 「…（来自系统 PATH，非本产品安装 —— 用户机器上不一定有）」）。
  *
- * 那句话改一个词、或者被翻译，`borrowed` 会**恒为 0**，审计末尾那句
+ * **那句话改一个词、或者被翻译，`borrowed` 恒为 0**，审计末尾那句
  * 「本轮结论：借了宿主 0 个」就成了一句假话 —— 而且是**朝着"更干净"的方向**说假话，
- * 没有任何东西会红。本仓在「拿散文当判据」上已经栽过两次
+ * 没有任何东西会红。`selftest-e2e-notes.mjs` 里印了现场：同一台机器、同样借 1 个，
+ * 只改一个词 ⇒ 报「借了宿主 0 个」（真值 1）。
+ *
+ * ⚠️ 这是「**从散文里推导语义**」那一族，与产品侧靠正则嗅探文案算警告色是同一个病；
+ * 只不过这次是**守卫**在嗅散文。本仓已经栽过三次
  * （`unavailableReason` 两处、`先安装 CPU` 那条正则一处）。
  *
- * ⚠️ 判据**没有动**（行为等价是这一轮的硬要求）。正解是 daemon 那侧给这一档一个
- * 结构字段（`origin: 'store' | 'bundled' | 'system-path'`），那要动契约，需要 owner 裁决。
- * 自检里有一条守卫盯着那句中文里的 `PATH` 还在不在 —— 它挡不住语义漂移，
- * 但至少让"那句话被改了"这件事有人知道。
+ * ⇒ 正解：daemon 给这一档一个**结构字段**（`origin: 'store' | 'bundled' | 'system-path'`），
+ *   判据改读结构、删掉这个正则。要动契约，等 owner 排期。
+ *
+ * ⚠️ 两个方向今天各有一只眼睛，**但都不能替代结构字段**：
+ *   · 散文被改写 ⇒ `selftest-e2e-notes.mjs` 的契约漂移守卫红（盯那句中文还在不在）；
+ *   · 结构字段落地 ⇒ `check-pending-claims.mjs` 那条红（提醒来删掉这个正则）。
+ *   两者都挡不住**语义**漂移（比如那句话仍含 "PATH" 但含义变了）。
  *
  * @returns {{tools: object[], own: object[], borrowed: object[], missing: object[]}}
  */
 export function classifyToolChecks(checks) {
   const tools = (checks ?? []).filter((c) => String(c?.id ?? '').startsWith(TOOL_CHECK_PREFIX));
+  // 🔴 散文匹配，已知脆弱：daemon 那句中文改一个词，这一档就恒为 0。见上方注释与挂起项。
   const isPathProse = (c) => /PATH/i.test(String(c?.detail ?? ''));
   return {
     tools,

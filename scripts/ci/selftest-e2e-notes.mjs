@@ -59,6 +59,7 @@ import {
   checkDeletedNoteWritesRejected,
   checkDeletionInvisible,
   checkExportEnvelope,
+  checkExportableBeforeDelete,
   checkFolderCreated,
   checkFolderFilter,
   checkLlmEndpointCalled,
@@ -93,6 +94,12 @@ import {
   parseOutlineIndices,
   uidsOfNotePage,
 } from './e2e-notes-assertions.mjs';
+/*
+ * ★ 只取那份**记录**，不跑那个工具 —— 逐格重扫要几十秒，而门禁要的是快速判决。
+ *   `leg-coverage.mjs` 刻意不挂进 `test:ci-scripts`（它的名字不以 `selftest-` 开头，
+ *   所以 T-163 的全集扫描不会要求它接链）。见那份文件头「为什么它不是门禁」。
+ */
+import { SUBSUMED_LEGS } from './leg-coverage.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -328,6 +335,18 @@ const SUITES = [
         { ref: { ...TOPIC_NODE.refs[0], transcriptUid: '01J8XXXXXXXXXXXXXXXXXXXXXX' } },
       ],
       ['转写稿是空的（对不出原文）', { segments: [] }],
+      [
+        '☑ 独占 / ✅ #90 的 ⑤-b：quote 是空串 —— `joined.includes("")` 恒真，从前这里是绿的',
+        { ref: { ...TOPIC_NODE.refs[0], quote: '' } },
+      ],
+      [
+        '☑ 独占：quote 全是空白（trim 之后还是空）—— 同一条空转的另一张脸',
+        { ref: { ...TOPIC_NODE.refs[0], quote: '   \n\t ' } },
+      ],
+      [
+        '☑ 独占：产品干脆不发 quote 这个字段（`String(undefined ?? "")` 也是空串）',
+        { ref: { transcriptUid: TR_UID, startMs: 4300, endMs: 9100 } },
+      ],
     ],
   },
   {
@@ -584,13 +603,42 @@ const SUITES = [
     ],
   },
   {
-    name: 'checkDeletedNoteWritesRejected（写路径同样 404）',
+    name: 'checkDeletedNoteWritesRejected（写路径同样 404，且导出那格的码对得上）',
     fn: checkDeletedNoteWritesRejected,
-    good: { patchStatus: 404, starStatus: 404, exportStatus: 404 },
+    good: {
+      patchStatus: 404,
+      starStatus: 404,
+      exportStatus: 404,
+      exportBody: { error: { code: ERROR_CODES.noteNotFound } },
+    },
     bad: [
       ['★★ 已删除的笔记还能被继续编辑', { patchStatus: 200 }],
       ['★ 已删除的笔记还能被打星标', { starStatus: 200 }],
       ['已删除的笔记还能被导出', { exportStatus: 200 }],
+      [
+        '☑ 独占 / ✅ #90 的 ⑤-a：404 的理由是「这条笔记没有导图」而不是「这条笔记不存在」——' +
+          ' 软删守卫被抽掉时就长这样，从前这里是绿的',
+        { exportBody: { error: { code: ERROR_CODES.noMindmap } } },
+      ],
+      ['☑ 独占：导出 404 了但连 error 那一格都没有', { exportBody: {} }],
+    ],
+  },
+  {
+    name: 'checkExportableBeforeDelete（★ 非空虚前提：删之前这条笔记真的有导图）',
+    fn: checkExportableBeforeDelete,
+    good: {
+      status: 200,
+      contentType: EXPORT_EXPECTATIONS.md.ct,
+      body: `# 会议纪要\n- 会议主题 ${NONCE}\n`,
+    },
+    bad: [
+      [
+        '★★ 夹具那一半悄悄失败了：这条笔记根本没有导图 ⇒ F5-a6 的错误码那格会恒红，' +
+          '把"夹具没造出来"报成"产品退化了"',
+        { status: 404 },
+      ],
+      ['content-type 不对（导出的不是 md）', { contentType: 'application/json; charset=utf-8' }],
+      ['★ 回了 200 但正文是空的 —— 这份导图是个空壳', { body: '' }],
     ],
   },
   {
@@ -1013,33 +1061,59 @@ for (const s of SUITES) {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+say('');
+say('── ②-bis 「删了也绿」那 7 格的登记还对得上吗（`leg-coverage.mjs` 的门禁那一半）');
+
 /*
- * ── ②-bis 「每一格都有专属坏输入吗」—— 一次性扫过的结果，写在这里备查 ──────────
+ * ②只保证「每条判据至少有一个坏输入」。更强的那个问题是「**判据里的每一格**
+ * 是不是都有一个只有它会响的输入」——把那一格删掉，②还红不红？
  *
- * ②只保证「每条判据至少有一个坏输入」。更强的问题是「**判据里的每一格**是不是
- * 都有一个只有它会响的输入」——把那一格删掉，②还红不红？
+ * 那个问题由 `scripts/ci/leg-coverage.mjs` 回答（手动跑，几十秒，逐格删了再跑本文件）。
+ * `[实测 2026-09-06]` 99 格 → **91 格有专属坏输入**（上面打 `☑ 独占` 的那些就是为补齐
+ * 它们加的：第一次扫 94 格里有 22 格没有）；剩 7 格删掉之后自检**照样绿** ——
+ * 因为②表里每个坏输入都会被**相邻那一格先判红**，没有用例专门盯着它们。
+ * 它们不是空转（缺陷仍会被相邻那格抓住），是**数学上被吞掉**，
+ * 理由逐条记在 `SUBSUMED_LEGS` 里。另有 1 格删掉就 TypeError，判不了。
  *
- * 复现（一次性，不入库；`all([…])` 的每一格逐条删掉再跑本文件）：
- *   把每个 `() => …` 条目从 `e2e-notes-assertions.mjs` 里删掉一格，
- *   `node scripts/ci/selftest-e2e-notes.mjs` 必须红。
+ * ★ 这一段是那个工具的**门禁那一半**，秒级：`SUBSUMED_LEGS` 里每条 `needle`
+ *   必须在判据源码里**恰好出现一次**。
  *
- * `[实测 2026-09-06]` 94 格里 **87 格有专属坏输入**（上面打 `☑ 独占` 的那些就是
- * 为补齐它们加的：第一次扫出 22 格没有）。剩下 **7 格删掉之后自检仍然红** ——
- * 它们不是空转，是**数学上被相邻那一格吞掉**的：删了照样有格子响，只是
- * 报出来的话会难懂一点。逐条写出来，免得下一个人以为这里扫干净了：
+ * ⚠️ 为什么非要有这一段：#90 里那个扫描器是跑完就删的临时脚本，只在文件头留了
+ * 一句"复现命令"。**这个仓已经证明过"下一个人记得读文件头"不成立** ——
+ * 那 22 格就是这么长出来的。所以这份记录不靠人记得回来重跑：
+ * 有人动了这 7 格里的任何一格，这里当场红，把他领到 `leg-coverage.mjs` 跟前。
  *
- *   · `ps.length > 0`（分页）      —— pages 为空 ⇒ total 是 NaN ⇒ `total > pageSize` 必响
- *   · `ps.length >= 2`（分页）      —— 只有一页时：满 50 而 total>50 ⇒ `seen.size≠total` 必响；
- *                                     total≤50 ⇒ `total > pageSize` 必响
- *   · `Number.isFinite`（星标筛）   —— 非数字 ⇒ `s < a` 恒假 ⇒ 下一格必响
- *   · `s < a`（星标筛）             —— `s ≥ a` ⇒ `a - s ≤ 0 < 3` ⇒ 下一格必响
- *   · `!!cn`（selfcheck 探针在不在）—— cn 缺席 ⇒ `cn?.status` 是 undefined ≠ 'ok' ⇒ 下一格必响
- *   · `!!hit` ×2（F5-e1 / F5-e2）   —— hit 缺席 ⇒ `Number.isInteger(undefined)` /
- *                                     `Number(undefined) <= dur` 都为假 ⇒ 下一格必响
- *
- * ⚠️ 这 7 格**不许**因为"反正有别人守着"就删掉：它们守的是**那句话说得清不清楚**。
- * 一条 `starred total=NaN 不小于全量 total=NaN` 的报错，读日志的人查不出方向。
+ * ⚠️ 它**不是豁免名单**。名单里记的不是"这几格不用管"，是"这几格为什么被吞掉"，
+ * 而且每一条都是**可核对的事实**（源码里恰好一处）。
  */
+{
+  const src = readFileSync(join(REPO, 'scripts', 'ci', 'e2e-notes-assertions.mjs'), 'utf8');
+  assert.ok(
+    SUBSUMED_LEGS.length >= 5,
+    `SUBSUMED_LEGS 只剩 ${SUBSUMED_LEGS.length} 条 —— 少于 5 条时多半是这份记录被清空了，` +
+      '而它被清空的样子和"全都补上专属坏输入了"一模一样。真补齐了请连这条地板一起改。',
+  );
+  for (const leg of SUBSUMED_LEGS) {
+    const hits = src.split(leg.needle).length - 1;
+    if (hits === 1) {
+      ok(
+        `「${leg.needle.slice(0, 44)}…」在判据源码里恰好一处（被吞掉的理由：${leg.why.slice(0, 40)}…）`,
+      );
+    } else {
+      bad(
+        `SUBSUMED_LEGS 对不上判据源码：\`${leg.needle.slice(0, 60)}\``,
+        `源码里 ${hits} 处（期望恰好 1 处）—— 这一格被改/删/复制了。\n` +
+          `      它原本是「删了也绿」的 7 格之一，理由是：${leg.why}\n` +
+          '      请重跑 `node scripts/ci/leg-coverage.mjs`，并更新 SUBSUMED_LEGS。',
+      );
+    }
+  }
+  // 前提检查：拿一个必不存在的 needle 过一遍，证明上面那组不是恒真
+  if (src.includes(`must(definitely_not_a_real_leg_${Date.now()})`))
+    bad('②-bis 的前提检查', '不可能的 needle 竟然命中了 —— 这组守卫是恒真的');
+  else ok('②-bis 的前提检查：不存在的 needle 确实匹配不到（上面那组不是恒真）');
+}
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 say('');
@@ -1218,6 +1292,43 @@ degraded(
   '"任何无扩展名路径都回 200"的兜底会把本该 404 的东西变成 200 —— 只看状态码的判据看不见',
 );
 
+/* ── ③-h ✅ #90 的 ⑤-a：退化成「只钉状态码，不看错误码」 ────────────────────── */
+const deletedWritesStatusOnly = ({ patchStatus, starStatus, exportStatus }) =>
+  patchStatus === 404 && starStatus === 404 && exportStatus === 404
+    ? { ok: true, reason: '三条写路径全是 404' }
+    : { ok: false, reason: '有一条不是 404' };
+degraded(
+  'checkDeletedNoteWritesRejected',
+  deletedWritesStatusOnly,
+  checkDeletedNoteWritesRejected,
+  {
+    patchStatus: 404,
+    starStatus: 404,
+    exportStatus: 404,
+    exportBody: { error: { code: ERROR_CODES.noMindmap } },
+  },
+  `★ 软删守卫被从导出路由抽掉 ⇒ 404 的理由变成「这条笔记没有导图」（${ERROR_CODES.noMindmap}）——` +
+    ' 只钉状态码的那一版正是 #90 抓到的那条空转',
+);
+
+/* ── ③-i ✅ #90 的 ⑤-b：退化成「只做 includes，不问 quote 空不空」 ──────────── */
+const quoteIncludesOnly = ({ ref, segments, transcriptUid }) => {
+  const joined = (segments ?? []).map((s) => String(s?.text ?? '').trim()).join(' ');
+  const quote = String(ref?.quote ?? '').trim();
+  if (!joined.includes(quote.slice(0, 60))) return { ok: false, reason: 'quote 不是原文逐字' };
+  return String(ref?.transcriptUid) === String(transcriptUid)
+    ? { ok: true, reason: 'quote 对得上' }
+    : { ok: false, reason: 'transcriptUid 不对' };
+};
+degraded(
+  'checkRefQuoteVerbatim',
+  quoteIncludesOnly,
+  checkRefQuoteVerbatim,
+  { ref: { ...TOPIC_NODE.refs[0], quote: '' }, segments: SEGMENTS, transcriptUid: TR_UID },
+  '★ `joined.includes("")` 在 JS 里**恒真** —— 一条 quote 为空的 ref 重转写之后永久失效，' +
+    '而退化版对它一个字都不说',
+);
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 say('');
 say('── ④ 契约漂移守卫：判据里的字面量必须真的还在产品源码里');
@@ -1271,13 +1382,42 @@ function pinLiteral(label, src, needle, notNeedle) {
 
   /*
    * ★ `NO_MINDMAP` 与「笔记查不到 ⇒ 404」这两条**同时**在导出路由上成立，
-   *   正是 ⑤-a 那条空转的成因。这里正面核一次它们都还在。
+   *   正是 ⑤-a 那条空转的成因 —— 也正是 F5-a6 现在必须连错误码一起钉的理由。
+   *   它哪天消失了（比如导出改成对"没有导图"回 200 空文档），那条判据的
+   *   `exportCode` 就该跟着重看：这里红一次，把这件事交到改它的人手上。
    */
   pinLiteral(
-    '导出路由的 NO_MINDMAP 分支（⑤-a 那条空转的成因）',
+    '导出路由的 NO_MINDMAP 分支（F5-a6 必须分码的理由）',
     contentTs,
     `'${ERROR_CODES.noMindmap}', 'no mindmap for this note'`,
     `'${ERROR_CODES.noMindmap}', 'definitely-not-real-${stamp}'`,
+  );
+}
+
+{
+  /*
+   * ★★ 「产品发空 `quote`」**今天不可达** —— 而这条守卫盯的就是那个"今天"。
+   *
+   * `checkRefQuoteVerbatim` 的空 quote 那一格（#90 的 ⑤-b）价值是**纵深**：
+   * 上游 `packages/mindmap/src/validate.ts` 已经挡住了生成与 PATCH 两条路径，
+   * 所以端到端这一层今天不该看到空 quote。**那道闸一旦被放松，
+   * 端到端这一层就是唯一还看得见的地方** —— 所以它没了必须有人知道。
+   *
+   * 判据钉的是**那条判断本身**（D-02 §3.5 的实现），不是"文件里出现过这几个字"。
+   */
+  const validateTs = readFileSync(join(REPO, 'packages', 'mindmap', 'src', 'validate.ts'), 'utf8');
+  const stamp = Date.now();
+  pinLiteral(
+    '上游那道闸：validate.ts 的 REF_MISSING_QUOTE（D-02 §3.5）',
+    validateTs,
+    'if (!ref.quote || ref.quote.trim().length === 0)',
+    `if (!ref.quote_not_real_${stamp})`,
+  );
+  pinLiteral(
+    '上游那道闸的错误码',
+    validateTs,
+    "'REF_MISSING_QUOTE'",
+    `'REF_MISSING_QUOTE_NOT_REAL_${stamp}'`,
   );
 }
 
@@ -1482,26 +1622,17 @@ function registerVacuity(name, aLabel, a, bLabel, b, fn, howToFix) {
   }
 }
 
-registerVacuity(
-  '⑤-a F5-a6 的 export 那一格',
-  '已删除的笔记被软删守卫拒了（404 NOTE_NOT_FOUND）',
-  { patchStatus: 404, starStatus: 404, exportStatus: 404 },
-  '守卫被整个抽掉、笔记查得到，但它本来就没有导图（404 NO_MINDMAP）',
-  { patchStatus: 404, starStatus: 404, exportStatus: 404 },
-  checkDeletedNoteWritesRejected,
-  '① 换一条**真有导图**的笔记走这一格（主角笔记有），或 ② 连错误码一起钉' +
-    `（\`${ERROR_CODES.noteNotFound}\` ≠ \`${ERROR_CODES.noMindmap}\`）`,
-);
-
-registerVacuity(
-  '⑤-b checkRefQuoteVerbatim 的 quote 那一格',
-  'quote 是转写稿里的原文逐字',
-  { ref: TOPIC_NODE.refs[0], segments: SEGMENTS, transcriptUid: TR_UID },
-  '★ quote 是**空串**（重转写之后这条 ref 永久失效）—— `joined.includes("")` 恒真',
-  { ref: { ...TOPIC_NODE.refs[0], quote: '' }, segments: SEGMENTS, transcriptUid: TR_UID },
-  checkRefQuoteVerbatim,
-  '加一行 `must(quote.length > 0, …)` —— 一行的事，但那是「改判什么」，要 owner 点头',
-);
+/*
+ * ── ✅ ⑤-a 与 ⑤-b 已修（Manager 2026-09-06），**桩已拆** ──────────────────────
+ *
+ * 两条的登记桩在这里存在过一天，现在删掉了 —— 这正是它们设计时说好的那一步：
+ * 「修好的那天这里会红，逼出一次显式的删桩 + 更新报告」。
+ * 它们今天的牙齿在②表里（`checkDeletedNoteWritesRejected` 的错误码那一格、
+ * `checkRefQuoteVerbatim` 的空 quote 那一格，各带一条 `☑ 独占` 用例），
+ * 以及下面 ③-h / ③-i 两组「退化版放过、现行版抓住」的对照。
+ *
+ * ⑤-c **没修**（要动 `apps/daemon`，另一路正在动那儿），桩还在。
+ */
 
 registerVacuity(
   '⑤-c classifyToolChecks 的 borrowed 那一档（拿散文当判据）',

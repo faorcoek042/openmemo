@@ -134,7 +134,101 @@ export const PENDING = [
     ],
   },
 
+  {
+    id: '🔴 tool.* 的"借宿主的"靠**散文**认 —— daemon 那句中文改一个词就静默变 0',
+    where: 'scripts/ci/e2e-notes-assertions.mjs 的 classifyToolChecks()（`/PATH/i.test(detail)`）',
+    since: '2026-09-06 由 #90 的逐格扫描查出（⑤-c），Manager 当天裁决"最严重，但不在那一路修"',
+    /*
+     * ★ 这条谓词的方向**和它上面那些相反**，值得说清楚，别读混。
+     *
+     * 缺陷是：判据从 daemon 写给人看的一句中文里**推导语义** ——
+     *   `status === 'warn' && /PATH/i.test(detail)` ⇒「这个工具是借宿主 PATH 的」。
+     * 那句话（`packages/runtime/src/selfcheck.ts`：「…来自系统 PATH，非本产品安装…」）
+     * 改一个词、或者被翻译，`borrowed` 就**恒为 0**，而 e2e-notes 审计末尾那句
+     * 「本轮结论：借了宿主 N 个」会**朝着"更干净"的方向**说假话，没有任何东西会红。
+     * `selftest-e2e-notes.mjs` 里印过现场：同一台机器、同样借 1 个 ⇒ 报「借了宿主 0 个」。
+     *
+     * ⚠️ 这是「**从散文里推导语义**」那一族，与产品侧靠正则嗅探文案算警告色同一个病；
+     * 只不过这次是**守卫**在嗅散文。本仓在这上面已经栽过三次
+     * （`unavailableReason` 两处、`先安装 CPU` 那条正则一处）。
+     *
+     * 正解：daemon 给这一档一个**结构字段**（`origin: 'store' | 'bundled' | 'system-path'`），
+     * 判据改读结构、把那个正则删掉。要动 `apps/daemon` 的契约，等排期。
+     *
+     * 所以谓词盯的是「**那个结构字段来了没有**」：
+     *   · 还没来 ⇒ 0 ⇒ 绿（"还没做"是事实，不是故障 —— 本文件的规矩）；
+     *   · 来了   ⇒ 非 0 ⇒ **红给落地那个人看**：他是唯一一个此刻知道
+     *     "现在可以改读结构了"的人，而那个正则不会自己消失。
+     *
+     * ⚠️ 另一个方向（那句中文被改写）由 `selftest-e2e-notes.mjs` 的契约漂移守卫盯着，
+     *   **不在这里重复**：两条守卫盯同一个字面量会一起红，读的人分不清该做哪件事。
+     */
+    predicate: () => countIn('packages/runtime/src/selfcheck.ts', /'system-path'/g),
+    expected: 0,
+    holds: 'daemon 还没有给这一档结构字段 —— 守卫只能继续嗅那句中文，缺口如实存在',
+    onChange: [
+      'daemon 那侧出现了 `system-path` —— **结构字段落地了。**',
+      '要做的：把 `classifyToolChecks()` 里的 `/PATH/i.test(detail)` 换成读那个字段，',
+      '删掉判据旁边那段 🔴 注释，并把 `selftest-e2e-notes.mjs` 的 ⑤-c 登记桩拆掉',
+      '（那个桩钉的是"缺口存在"，缺口没了它会自己红）。',
+      '⚠️ 别只加字段不改判据：那样两套并存，而散文那套仍然是唯一在跑的。',
+    ],
+  },
+  {
+    id: 'e2e-notes 假端点：转写稿一长，多个窗口会造出**同名**主题节点',
+    where: 'scripts/ci/e2e-notes-audit.mjs 的 outlineFor() 与 F4-a5 的 nodeList.find()',
+    since: '2026-09-06 抽判据时看出来的；jfk.wav 只转出 1 段，所以今天碰不到',
+    /*
+     * `outlineFor()` 对**每一个** map-reduce 窗口都回同一个标题 `会议主题 <nonce>`，
+     * 而 F4-a5 用 `nodeList.find(n => n.text === '会议主题 <nonce>')` 取**第一个**、
+     * 期望值却取 `llmState.returnedSegs[0]`（**第一次**调用回的编号）。
+     *
+     * 导图节点的顺序由产品的合并逻辑决定，不保证与调用顺序一致 ⇒
+     * **转写稿一变长（多于一个窗口），这条断言可能开始随机变红。**
+     * ⚠️ 那是最难查的一种：红的那句话会指着时间戳说"产品算错了"，
+     * 而真正错的是夹具挑错了节点。
+     *
+     * 今天不发生，因为 `[实测]` jfk.wav 用 whisper-tiny 只转出 **1 段** ⇒ 只有一个窗口。
+     * 谓词盯的就是这个前提：**窗口划分那段代码还在不在、还是不是按字符预算切**。
+     * `planWindows` 一改（或夹具换了更长的音频），这一条就该被重新看一眼。
+     */
+    predicate: () =>
+      countIn('packages/mindmap/src/generate.ts', /export function planWindows\(/g) +
+      countIn(
+        'scripts/ci/e2e-notes-audit.mjs',
+        /const pick = idx\.length > 1 \? \[idx\[1\]\] : \[idx\[0\]\];/g,
+      ),
+    expected: 2,
+    holds: '分窗逻辑与假端点的挑段逻辑都没动 —— 单窗口那个前提仍然是今天的实况',
+    onChange: [
+      '`planWindows` 或假端点的挑段逻辑被动过了 —— 多窗口这条路可能真的会走到。',
+      '要做的：让 `outlineFor()` 给**每个窗口**回一个可区分的标题（比如带上窗口序号），',
+      '并让 F4-a5 按那个标题去找对应的节点，而不是 `find()` 取第一个。',
+      '⚠️ 不改的后果不是"漏检"，是**随机变红**，而红的那句话会指错方向（说产品算错了时间戳）。',
+    ],
+  },
+
   /* ── 以下是**写不出谓词**的，按规矩登记而不是默默跳过 ───────────────────── */
+  {
+    id: '🔴 F5-a3 那个 id 说了它没做的事（`PUT /folder` 那一半）',
+    where: 'scripts/ci/e2e-notes-audit.mjs 的 `F5-a3 PUT /star 与 PUT /folder 各自生效`',
+    since: '2026-09-06 由 #90 查出；Manager 当天裁决"这一轮别改 id，但必须注明"',
+    predicate: null,
+    whyNoPredicate: [
+      'id 写着「PUT /star **与 PUT /folder** 各自生效」，而函数体里一个字都没提 folder ——',
+      '`PUT /folder` 真正被验到是在第 8 节的 F5-b1。把 folder 那条路由弄坏，这一格照样绿。',
+      '本仓四种守卫失效形态里的第④种：**注释型断言 —— 声称一件从没发生的事**。',
+      '',
+      '⚠️ **写不出谓词，是因为要判的那件事是「这个名字和这段代码说的是不是同一件事」**——',
+      '那是语义比对，不是 grep。这一族的通用解是 `check-comment-facts.mjs`，',
+      '但它的判据方向定死在"只会漏检、不会误伤"那一侧（三种可核形态），够不着这一条。',
+      '',
+      '这一轮做的**不是**修，是**止损**：那半话写进了这一格的 `detail`，',
+      '而 `detail` 与 id 一起进 `results[]`、一起被打印 —— 读总表的人看得见"folder 那一半没断"。',
+      '**理由是 id 会进凭证**，而凭证是这个仓最值钱的记号（#102 那次就是凭证造假）。',
+      '→ 真修法二选一，都要跟 attest 那侧对一遍：把 folder 那一半真的加上，或把 id 改窄。',
+    ],
+  },
   {
     id: '破坏性按钮（删除/卸载/下载/重置…）点了有没有反应',
     where: 'scripts/ci/e2e-browser-audit.mjs 的 SKIP_WORDS 跳过清单',
