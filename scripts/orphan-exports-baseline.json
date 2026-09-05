@@ -3,10 +3,15 @@
     "这是 `scripts/check-orphan-exports.mjs` 的**豁免名单**，不是白名单。",
     "判据：**只准变短**。新增一条零引用导出会红；这里的条目被接上/删掉之后，它也会红，逼人来删这一行。",
     "往这里加条目之前先问一遍：它是\"契约形状\"，还是\"功能只做了一半\"？后者应该去接上，不是来这里登记。",
-    "带 ⚠️ 的 note 是**已知开着的缺陷**，登记在这里是为了不丢，不是为了豁免。"
+    "带 ⚠️ 的 note 是**已知开着的缺陷**，登记在这里是为了不丢，不是为了豁免。",
+    "",
+    "★ T-183：这一轮名单**净变长了 5 条**（64 → 69），是这份文件第一次不缩水。理由必须写在这里，否则下一个人只会看见棘轮被破坏了：",
+    "· 减 4：`apps/web/src/lib/api/auth-mode.ts` 整个删掉（6 个导出零消费方，且它想解决的问题已由 daemon 侧改法取代 —— 见 `apps/daemon/src/http/server.ts:260`「不变量应该是『鉴权关了握手就不该失败』，而不是『每个调用方都要记得判断鉴权关没关』」）。",
+    "· 加 9：**扫描器修好之后新看见的，不是新产生的**。旧实现用裸标识符名跨全仓正则、没有模块解析，40 个重名导出（37 个跨包）因而互相证明对方活着。9 条全部是那批里被遮住的真条目，每条的 note 里写了它被谁遮住。",
+    "· 换句话说：**棘轮没有被放松，是尺子换准了**。要它继续变短，下一步是处置这 9 条（合并重复实现 / 删多余常量），不是把它们改回隐身。"
   ],
   "generatedAt": "2026-08-06",
-  "generatedBy": "T-157 sweep-fix",
+  "generatedBy": "T-157 sweep-fix（T-183 修正重名遮蔽后重算）",
   "accepted": [
     {
       "file": "apps/daemon/src/bootstrap/single-instance.ts",
@@ -20,6 +25,11 @@
     {
       "file": "apps/daemon/src/http/auth.ts",
       "name": "clearSessionCookie"
+    },
+    {
+      "file": "apps/daemon/src/index.ts",
+      "name": "PACKAGE_NAME",
+      "note": "★ T-183 新可见（不是新产生）：7 个包各导出一次同名常量、全仓零读，而旧口径的裸名正则让它们**互相计为引用**，于是 7 条一起隐身。`debt-cleanup §4.1` 坑 3 记过同一个形状，这是它第三次现身。⚠️ 未处置：7 份重复常量该留哪一份是跨 7 个包的口径问题，不属本轮范围。"
     },
     {
       "file": "apps/daemon/src/jobs/queue.ts",
@@ -59,22 +69,6 @@
       "file": "apps/web/src/components/common/statusTone.ts",
       "name": "jobStepTone",
       "note": "⚠️ **开着的缺陷**：T-114 立的「状态色收拢成一份」没有落地，各渲染点仍各挑各的颜色 ——正是该文件头警告过的那种不一致。"
-    },
-    {
-      "file": "apps/web/src/lib/api/auth-mode.ts",
-      "name": "getAuthMode"
-    },
-    {
-      "file": "apps/web/src/lib/api/auth-mode.ts",
-      "name": "readDeclaredMode"
-    },
-    {
-      "file": "apps/web/src/lib/api/auth-mode.ts",
-      "name": "resetAuthMode"
-    },
-    {
-      "file": "apps/web/src/lib/api/auth-mode.ts",
-      "name": "setAuthMode"
     },
     {
       "file": "apps/web/src/lib/api/mock.ts",
@@ -125,6 +119,11 @@
       "name": "vecDelete"
     },
     {
+      "file": "packages/downloader/src/index.ts",
+      "name": "PACKAGE_NAME",
+      "note": "★ T-183 新可见 —— 同 apps/daemon/src/index.ts :: PACKAGE_NAME 那条。"
+    },
+    {
       "file": "packages/downloader/src/proxy.ts",
       "name": "DEFAULT_PROBE_TARGETS"
     },
@@ -138,6 +137,11 @@
       "name": "isValidSha256"
     },
     {
+      "file": "packages/llm/src/index.ts",
+      "name": "PACKAGE_NAME",
+      "note": "★ T-183 新可见 —— 同 apps/daemon/src/index.ts :: PACKAGE_NAME 那条。"
+    },
+    {
       "file": "packages/llm/src/detect.ts",
       "name": "providerFromDetected"
     },
@@ -146,8 +150,23 @@
       "name": "notConfiguredError"
     },
     {
+      "file": "packages/mindmap/src/index.ts",
+      "name": "PACKAGE_NAME",
+      "note": "★ T-183 新可见 —— 同 apps/daemon/src/index.ts :: PACKAGE_NAME 那条。"
+    },
+    {
       "file": "packages/mindmap/src/types.ts",
       "name": "reachableCount"
+    },
+    {
+      "file": "packages/pipeline/src/index.ts",
+      "name": "PACKAGE_NAME",
+      "note": "★ T-183 新可见 —— 同 apps/daemon/src/index.ts :: PACKAGE_NAME 那条。"
+    },
+    {
+      "file": "packages/runtime/src/index.ts",
+      "name": "PACKAGE_NAME",
+      "note": "★ T-183 新可见 —— 同 apps/daemon/src/index.ts :: PACKAGE_NAME 那条。"
     },
     {
       "file": "packages/shared/src/api.ts",
@@ -178,6 +197,11 @@
       "file": "packages/shared/src/api.ts",
       "name": "VerifyRequest",
       "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/breaker.ts",
+      "name": "BreakerVerdict",
+      "note": "★ T-183 新可见（不是新产生）：与 `packages/runtime/src/probe/runProbe.ts:387` 同名同定义，而**真实消费方（daemon setup.ts）走的是 runtime 那份**。旧口径的裸名正则把 runtime 那份的引用算给了 shared 这份，于是它一直隐身。⚠️ 未处置：两份该合并成哪一份是重复实现的口径问题（house rule：正解是让人用回权威那份，不是删掉），不属本轮范围。"
     },
     {
       "file": "packages/shared/src/events.ts",
@@ -253,6 +277,16 @@
       "file": "packages/shared/src/notes.ts",
       "name": "NoteErrorCode",
       "note": "契约形状：`@openmemo/shared` 对外导出的类型/常量，今天还没有消费方。"
+    },
+    {
+      "file": "packages/shared/src/notes.ts",
+      "name": "ProbeResult",
+      "note": "★ T-183 新可见（不是新产生）：全仓有 4 个同名 `ProbeResult`（web types.ts / pipeline audio/ffmpeg.ts / runtime types.ts / 这里），而且**说的不是同一件事** —— 这里是媒体探测（title/author/durationMs），runtime 那个是硬件探测。旧口径的裸名正则让四者互相计为引用，这一份的零消费方因而隐身。⚠️ 未处置：重名不同义该怎么改名是跨包命名问题，不属本轮范围。"
+    },
+    {
+      "file": "packages/shared/src/notes.ts",
+      "name": "SEGMENT_FLAG",
+      "note": "★ T-183 新可见（不是新产生）：与 `apps/web/src/lib/events/types.ts:227` 和 `packages/pipeline/src/asr/types.ts` 三份同名。**两个真实消费方各自用的是自己包里那份**（web 的 SegmentRow/mock 用 web 那份，pipeline 的 whisperServer 用 pipeline 那份），shared 这份零消费方。旧口径把那些引用算给了它。⚠️ 未处置：三份位域常量本该只有一份（D-02 定义的是同一个 bitfield），合并是一次独立改动。"
     },
     {
       "file": "packages/shared/src/notes.ts",
