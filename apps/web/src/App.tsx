@@ -13,11 +13,11 @@ import {
   Stethoscope,
 } from 'lucide-react';
 
-import { ConnectionBanner } from './components/common/ConnectionBanner';
+import { ConnectionBanner } from './components/app-shell/ConnectionBanner';
 import { ConnectivitySummary } from './components/common/MockNotice';
-import { JobToaster } from './components/common/JobToaster';
+import { JobToaster } from './components/app-shell/JobToaster';
 import { PanelBoundary } from './components/common/PanelBoundary';
-import { ReadinessBanner } from './components/common/ReadinessBanner';
+import { ReadinessBanner } from './components/app-shell/ReadinessBanner';
 import { SearchBox } from './features/search';
 import { FolderTree } from './features/folders';
 import { Button } from './components/common/Button';

@@ -25,9 +25,9 @@ import { useProgressStore } from '../../lib/stores/progress.store';
 import { formatBytes, formatSpeed } from '../../lib/format/bytes';
 import { approxEta } from '../../lib/format/time';
 import { cn } from '../../lib/utils';
-import { Button } from './Button';
-import { ProgressMeter } from './ProgressMeter';
-import { RemediationButton } from './RemediationButton';
+import { Button } from '../common/Button';
+import { ProgressMeter } from '../common/ProgressMeter';
+import { RemediationButton } from '../common/RemediationButton';
 import { remediationTarget } from '../../lib/remediation/routes';
 
 /**

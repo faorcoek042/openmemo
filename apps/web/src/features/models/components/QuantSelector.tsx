@@ -5,7 +5,7 @@ import type { CatalogVariant } from '@openmemo/shared';
 import { arr } from '../../../lib/safe';
 import { formatBytes } from '../../../lib/format/bytes';
 import { cn } from '../../../lib/utils';
-import { FitBadge } from '../../../components/common/FitBadge';
+import { FitBadge } from './FitBadge';
 
 /**
  * 量化档位选择器（R-04 §9.2 线框）。

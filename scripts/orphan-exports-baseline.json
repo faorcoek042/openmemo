@@ -48,7 +48,7 @@
       "name": "currentLocale"
     },
     {
-      "file": "apps/web/src/components/common/BackendChip.tsx",
+      "file": "apps/web/src/features/runtime/components/BackendChip.tsx",
       "name": "backendLabel"
     },
     {

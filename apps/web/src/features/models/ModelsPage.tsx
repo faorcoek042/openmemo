@@ -2,9 +2,9 @@ import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 
 import { AsrModelPicker } from '../../components/common/AsrModelPicker';
-import { useLlmConfig } from '../../components/common/llm/llm-catalog';
-import { LlmSettingsSection } from '../../components/common/llm/LlmSettingsSection';
-import { PurposeBindingsSection } from '../../components/common/llm/PurposeBindingsSection';
+import { useLlmConfig } from './llm/llm-catalog';
+import { LlmSettingsSection } from './llm/LlmSettingsSection';
+import { PurposeBindingsSection } from './llm/PurposeBindingsSection';
 import { useTranslation } from 'react-i18next';
 import { Boxes, ChevronDown, ChevronRight, Cpu, Mic } from 'lucide-react';
 import type {

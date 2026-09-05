@@ -108,7 +108,7 @@
     "apps/daemon/src/testPorts.test.ts",
     "apps/daemon/src/ws/recorder.test.ts",
     "apps/daemon/src/ws/recorderErrorReason.test.ts",
-    "apps/web/src/components/common/jobToastModel.test.ts",
+    "apps/web/src/components/app-shell/jobToastModel.test.ts",
     "apps/web/src/features/capture/upload.test.ts",
     "apps/web/src/features/components/sha256ProvenanceRegex.test.ts",
     "apps/web/src/features/diagnostics/checkText.test.ts",
@@ -206,5 +206,10 @@
     "packages/shared/src/timecode.test.ts",
     "packages/shared/src/toolchain.test.ts"
   ],
-  "removed": []
+  "removed": [
+    {
+      "file": "apps/web/src/components/common/jobToastModel.test.ts",
+      "reason": "★ 不是删除，是**改名**：同一份测试随 `jobToastModel.ts` 一起搬到 `apps/web/src/components/app-shell/jobToastModel.test.ts`（同一轮的「共享层归位」——`JobToaster`/`jobToastModel`/`ReadinessBanner`/`ConnectionBanner` 只有 `App.tsx` 一个消费方，是应用外壳不是共享组件）。新路径已在 `tracked` 里，`--against` 的历史比对靠这一条认出旧路径没有凭空消失。⚠️ 断言一条没减：`git log --follow` 看得到它是同一个文件。"
+    }
+  ]
 }

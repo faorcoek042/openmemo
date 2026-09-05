@@ -11,7 +11,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type { Backend } from '@openmemo/shared';
-import { cn } from '../../lib/utils';
+import { cn } from '../../../lib/utils';
 
 /**
  * 加速后端状态芯片（CUDA / Vulkan / ROCm / Metal / CoreML / CPU）。

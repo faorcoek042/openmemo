@@ -9,8 +9,8 @@ import {
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { FitResult, FitTier } from '@openmemo/shared';
-import { cn } from '../../lib/utils';
-import { pickLocalized } from '../../lib/format/localized';
+import { cn } from '../../../lib/utils';
+import { pickLocalized } from '../../../lib/format/localized';
 
 /**
  * "这台机器能跑吗" 徽标（章程要求 2.2 的核心可视化）。

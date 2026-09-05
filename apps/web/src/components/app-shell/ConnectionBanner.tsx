@@ -1,8 +1,8 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 
-import { Banner } from './Banner';
-import { Button } from './Button';
+import { Banner } from '../common/Banner';
+import { Button } from '../common/Button';
 import { useConnectionStore } from '../../lib/stores/connection.store';
 import { resyncNow } from '../../lib/events/degradedPolling';
 

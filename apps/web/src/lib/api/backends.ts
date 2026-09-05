@@ -2,7 +2,7 @@
  * 后端包目录 —— **唯一的一份定义**。
  *
  * 与 `lib/api/models.ts` 同一条理由：消费方跨层。`lib/catalog/useJobCatalogNames.ts`
- * （给 `components/common/JobToaster.tsx` 用）与 `features/runtime` 都要读
+ * （给 `components/app-shell/JobToaster.tsx` 用）与 `features/runtime` 都要读
  * `/backends/catalog`，而分层护栏禁止 `lib/` 依赖 `features/`。
  *
  * 收敛前这两处各写了一份 `useQuery`：`queryKey` 同是 `qk.backends.catalog`、

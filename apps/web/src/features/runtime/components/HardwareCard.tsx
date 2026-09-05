@@ -6,7 +6,7 @@ import type {
   GetHardwareResponse,
   HardwareInfo,
 } from '@openmemo/shared';
-import { BackendChip } from '../../../components/common/BackendChip';
+import { BackendChip } from './BackendChip';
 import { Emphasis } from '../../../components/common/Emphasis';
 import { formatBytes } from '../../../lib/format/bytes';
 import { UNAVAILABLE_REASON_KEYS } from '../reasonKeys';

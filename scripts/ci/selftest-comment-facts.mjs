@@ -248,7 +248,7 @@ console.log('\n⑤b 前端两份清单 ⊆ 契约');
  * 所以下面**没有**一条"它们必须相等"的断言 —— 只断言两份都 ⊆ 契约。
  */
 const BLOCKED_REASON = 'apps/web/src/lib/jobs/blockedReason.ts';
-const JOB_TOASTER = 'apps/web/src/components/common/JobToaster.tsx';
+const JOB_TOASTER = 'apps/web/src/components/app-shell/JobToaster.tsx';
 
 check(`从 ${BLOCKED_REASON} 真的读得出 KNOWN_BLOCKED_CODES`, () => {
   const got = constArrayFrom(readRepo(BLOCKED_REASON), 'KNOWN_BLOCKED_CODES');

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RefreshCw } from 'lucide-react';
 
-import { Button } from '../Button';
+import { Button } from '../../../components/common/Button';
 import { useLlmModelsMutation } from './api';
 import type { ModelCatalogNote } from './llm-catalog';
 

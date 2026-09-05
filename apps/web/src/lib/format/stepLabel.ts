@@ -8,7 +8,7 @@
  * | 渲染点 | 缺词条时回退成 |
  * | --- | --- |
  * | `features/tasks/JobList.tsx` | **原样渲染 step key**（`unpacking` 这种英文机器枚举值） |
- * | `components/common/JobToaster.tsx` | **`progress.queued`「排队中」** —— 从「正在校验完整性」**倒退回流程起点** |
+ * | `components/app-shell/JobToaster.tsx` | **`progress.queued`「排队中」** —— 从「正在校验完整性」**倒退回流程起点** |
  * | `components/common/DownloadRow.tsx` | 另一套 `models.download.*` 词条，缺了也回「排队中」 |
  *
  * `[实测 2026-08-09]` `progress.unpacking` 在两个 locale 里都不存在，于是解包那几秒：

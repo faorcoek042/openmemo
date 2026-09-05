@@ -12,7 +12,7 @@ import type { ListNotesResponse } from '@openmemo/shared';
  * 这条规则如果留在 `useMutation` 的 `onMutate` 里，只能靠"渲染组件 → 点击 →
  * 在 onSettled 的重取回来之前抢着断言"来验证 —— 一条依赖时序的用例，
  * 绿也说明不了什么，红也未必是产品坏了。本项目已经明确记过这笔账
- * （`components/common/jobToastModel.ts` 的文件头写的就是同一件事）。
+ * （`components/app-shell/jobToastModel.ts` 的文件头写的就是同一件事）。
  *
  * 抽成纯函数之后，规则本身可以被逐条钉住，`onMutate` 只剩"对每条缓存调一次"。
  */

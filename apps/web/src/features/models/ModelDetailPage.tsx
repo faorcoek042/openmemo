@@ -6,7 +6,7 @@ import { ArrowLeft, ExternalLink, Gauge, ShieldCheck } from 'lucide-react';
 import { Button } from '../../components/common/Button';
 import { Emphasis } from '../../components/common/Emphasis';
 import { StatusChip } from '../../components/common/StatusChip';
-import { FitBadge, FitEta } from '../../components/common/FitBadge';
+import { FitBadge, FitEta } from './components/FitBadge';
 import { ErrorBlock } from '../../components/common/ErrorBlock';
 import { formatBytes } from '../../lib/format/bytes';
 import { localizedDescription, localizedName } from '../../lib/format/localized';
