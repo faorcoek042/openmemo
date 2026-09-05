@@ -78,7 +78,7 @@
         "packages/llm/src/errors.ts :: Remediation",
         "packages/shared/src/events.ts :: Remediation"
       ],
-      "note": "🟡 **两套策略，但本轮复核后\"证据不成立\"的部分要说清。** `packages/llm/src/errors.ts` 的 `{action, params?}` **没有 label**，而 `packages/shared/src/events.ts` 的契约把 `label`/`labelZh` 定为**必填**。⚠️ 原始线索说「`LlmError.toApiError()` 把无 label 的那份塞进 API 错误信封」—— **实测 `toApiError()` 全仓零调用方**（只有它自己的定义），所以那件事今天**没有在发生**。llm 的 remediation 实际只走到 `apps/daemon/src/http/rest/notes.ts` 的 `details: { hint: err.remediation }`，那不是 `ApiErrorBody.remediation` 那一格。⇒ 该怎么收敛（llm 侧补 label / 契约承认这一档可以没有）是个**产品判断**，两条路后果不同，**不在没人拍板时替它选**。真正该修的是那个零调用方的 `toApiError()`：它按签名承诺产出 `ApiErrorBody` 形状，而它产出的东西不满足那个契约。"
+      "note": "🟡 **两套策略，怎么收敛是产品判断 —— 已立项挂起，本轮刻意不修。** `packages/llm/src/errors.ts` 的 `{action, params?}` **没有 label**，而 `packages/shared/src/events.ts` 的契约把 `label`/`labelZh` 定为**必填**（UI 要把它渲染成一颗按钮）。⚠️ **两件事同时成立**：① `LlmError.toApiError()` **全仓零调用方**；② 它**按签名承诺 `ApiErrorBody` 形状**（返回类型与注释都这么写），**而它产出的东西不满足那个契约**。⇒ **它是错的，而且正因为没人调用它，所以没人发现它是错的** —— 孤儿门禁看的是 `export` 声明、**看不见类方法**，所以它从眼皮底下走过去了。⚠️ 立项时收到的线索说「`toApiError()` 把无 label 的那份塞进 API 错误信封」，**实测那件事没有在发生**（它没有调用方；llm 的 remediation 只走到 `rest/notes.ts` 的 `details: { hint: … }`，不是 `ApiErrorBody.remediation` 那一格）。★ **机器在盯着它**：`scripts/ci/check-pending-claims.mjs` 的同名挂起项，谓词 `callers=0,llmHasLabel=false`；谁接上它、或谁给 llm 侧补了 label，那条当场红。"
     },
     {
       "key": "name:RunResult",

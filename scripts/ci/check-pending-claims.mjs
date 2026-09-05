@@ -49,6 +49,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { prepare, sourceFiles } from '../lib/ts-lexer.mjs';
+
 const REPO = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 
 /** 读文件；不存在返回 null（"文件没了"本身常常就是前提变了）。 */
@@ -63,7 +65,85 @@ const countIn = (rel, re) => {
   return (t.match(re) ?? []).length;
 };
 
+/**
+ * 数一个正则在**全仓真代码**里命中几次（剥掉注释与字符串内容）。
+ *
+ * ⚠️ 必须剥注释：「零调用方」这一类谓词的头号假阳性就是**注释里提到了那个名字** ——
+ * 而讲究的代码里到处都是这种提及（这条挂起项自己的说明就写着 `toApiError`）。
+ * 剥字符串同理（错误信息里写自己的名字是好习惯，见 `check-orphan-exports.mjs` 的记载）。
+ * 用 `scripts/lib/ts-lexer.mjs` 那一份共用扫描器，不另抄一个残缺版。
+ */
+const countRepo = (re) =>
+  sourceFiles().reduce((n, f) => {
+    const code = prepare(readFileSync(resolve(REPO, f), 'utf8'));
+    return n + (code.match(re) ?? []).length;
+  }, 0);
+
 export const PENDING = [
+  {
+    id: '`LlmError.toApiError()` 零调用方，且它承诺的形状自己不满足',
+    where:
+      'packages/llm/src/errors.ts（`Remediation` 与 `toApiError()`）· ' +
+      'scripts/duplicate-declarations-baseline.json 的 `name:Remediation` 一条',
+    since: '2026-09-06 立项（#89 复核跨包重复时查出），**本轮刻意不修**',
+    /*
+     * ## 为什么这条要挂起，而不是顺手改掉
+     *
+     * 全仓有两个 `Remediation`：`packages/shared/src/events.ts` 的契约把
+     * `label`/`labelZh` 定为**必填**（UI 要把它渲染成一颗按钮，没有文案就没有按钮），
+     * 而 `packages/llm/src/errors.ts` 那个只有 `{action, params?}`。
+     *
+     * 怎么收敛是**产品判断，两条路后果不同**：让 llm 侧补上 label（那意味着
+     * 每个 LLM 错误都得配一句可点的中英文案），还是让契约承认「有一档可以没有 label」
+     * （那意味着前端要为无文案的 remediation 定一个兜底渲染）。**没人拍板时不替它选。**
+     *
+     * ## ⚠️ 这条真正的看点：**两件事同时成立**
+     *
+     * ① `toApiError()` **全仓零调用方**（本谓词第一格，今天 = 0）；
+     * ② 它**按签名承诺 `ApiErrorBody` 形状**（返回类型逐字写着 `code`/`message`/
+     *    `messageZh`/`retryable`/`remediation`，注释也写着「转成 `packages/shared` 的
+     *    `ApiErrorBody` 形状」），**而它产出的东西不满足那个契约** ——
+     *    它塞进去的是本文件那个没有 label 的 `Remediation`。
+     *
+     * ⇒ **它是错的，而且正因为没人调用它，所以没人发现它是错的。**
+     * 这正是 `check-orphan-exports.mjs` 那一族缺陷的另一种形态：孤儿门禁看的是
+     * `export` 声明，**看不见类方法**，所以这一个从它眼皮底下走过去了。
+     *
+     * ⚠️ 顺带纠一条**转述失实**的线索：立项时收到的说法是「`toApiError()` 把无 label
+     * 的那份塞进 API 错误信封」。**那件事今天没有在发生** —— 它没有调用方。
+     * llm 的 remediation 实际只走到 `apps/daemon/src/http/rest/notes.ts` 的
+     * `details: { hint: err.remediation }`，那不是 `ApiErrorBody.remediation` 那一格。
+     * 差别很要紧：前者是"线上正在发错数据"，后者是"一段没通电的错代码"。
+     *
+     * ## 谓词
+     *
+     * 复合值，两格任意一格变了都会红 —— 因为这条挂起项的前提正是"两件事同时成立"：
+     *
+     * · `callers`   —— 有人接上它了。**那一刻这条 bug 从"没通电"变成"正在发错数据"**，
+     *                  必须当场做那个产品判断，而不是让它安静地上线。
+     * · `llmHasLabel` —— 有人给 llm 侧的 `Remediation` 补了 label，
+     *                  也就是选了第一条路 ⇒ 这条挂起项闭合了，该销项。
+     */
+    predicate: () =>
+      [
+        `callers=${countRepo(/\.toApiError\s*\(/g)}`,
+        `llmHasLabel=${/export interface Remediation \{[^}]*\blabel\b/.test(
+          prepare(read('packages/llm/src/errors.ts') ?? ''),
+        )}`,
+      ].join(','),
+    expected: 'callers=0,llmHasLabel=false',
+    holds:
+      '仍是「零调用方 + 承诺的形状自己不满足」两件事同时成立 —— 没通电的错代码，本轮不修是刻意的',
+    onChange: [
+      'callers 变了 ⇒ **有人把 `toApiError()` 接上了**。它产出的 remediation 没有',
+      '  `label`/`labelZh`，而 `ApiErrorBody` 的契约要求必填 —— 前端拿到的按钮没有文案。',
+      '  要做的：当场做那个被挂起的产品判断（llm 侧补 label / 契约承认这一档可以没有），',
+      '  **别让它就这么上线**。',
+      'llmHasLabel 变了 ⇒ 有人选了「补 label」那条路，这条挂起项闭合 —— 从这里销项，',
+      '  并把 `scripts/duplicate-declarations-baseline.json` 里 `name:Remediation` 那条的',
+      '  note 一起更新（两份是不是还该分开，那时才有答案）。',
+    ],
+  },
   {
     id: 'D-09 §6 #2  settings/:section 仍渲染同一页',
     where: 'docs/design/D-09-ui-gap.md（§6 表格第 2 行）',
