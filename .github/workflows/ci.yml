@@ -206,6 +206,7 @@ jobs:
       lint: ${{ steps.lint.outcome }}
       tracked_sources: ${{ steps.tracked_sources.outcome }}
       orphan_exports: ${{ steps.orphan_exports.outcome }}
+      duplicate_declarations: ${{ steps.duplicate_declarations.outcome }}
       test_ratchet: ${{ steps.test_ratchet.outcome }}
       locale_ratchet: ${{ steps.locale_ratchet.outcome }}
       contract_fields: ${{ steps.contract_fields.outcome }}
@@ -529,7 +530,7 @@ jobs:
       - name: 汇总
         env:
           GATE_RESULT: ${{ needs.gate.result }}
-          GATE_STEP_NAMES: format_check,install,build,typecheck,lint,tracked_sources,orphan_exports,test_ratchet,locale_ratchet,contract_fields,dependency_audit,ci_scripts_selftest,test,mutation_anchors
+          GATE_STEP_NAMES: format_check,install,build,typecheck,lint,tracked_sources,orphan_exports,duplicate_declarations,test_ratchet,locale_ratchet,contract_fields,dependency_audit,ci_scripts_selftest,test,mutation_anchors
           # ★ 来自**独立 job** 的 result（不再是 gate 的 step outcome）。
           #   job result 与 step outcome 用的是同一套词汇（success/failure/skipped/cancelled），
           #   所以 summarize-gate.mjs 一个字都不用改：失败→「失败」、跳过/取消→「未验证」，
@@ -541,6 +542,7 @@ jobs:
           GATE_STEP_LINT: ${{ needs.gate.outputs.lint }}
           GATE_STEP_TRACKED_SOURCES: ${{ needs.gate.outputs.tracked_sources }}
           GATE_STEP_ORPHAN_EXPORTS: ${{ needs.gate.outputs.orphan_exports }}
+          GATE_STEP_DUPLICATE_DECLARATIONS: ${{ needs.gate.outputs.duplicate_declarations }}
           GATE_STEP_TEST_RATCHET: ${{ needs.gate.outputs.test_ratchet }}
           GATE_STEP_LOCALE_RATCHET: ${{ needs.gate.outputs.locale_ratchet }}
           GATE_STEP_CONTRACT_FIELDS: ${{ needs.gate.outputs.contract_fields }}
