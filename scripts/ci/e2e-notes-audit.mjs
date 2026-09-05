@@ -109,6 +109,62 @@ import {
   extractMutationIds,
   mutationAnnotation,
 } from './mutation-verdict.mjs';
+/*
+ * ★★ 判据本体在 `e2e-notes-assertions.mjs` —— **纯函数，能被喂输入**。
+ *
+ * 抽出来之前它们是这份文件里 115 处内联 `ok()`/`eq()`，而这份文件顶层执行、
+ * 结尾 `process.exit()` ⇒ **import 不进来 ⇒ 没有任何东西能给它们喂一份"本该判红"
+ * 的输入**。`e2e-runtime-audit.mjs` 正是这样让一条判据烂了三周
+ * （`/先安装 CPU/` 那条正则，文案一改它就再也没匹配过任何东西）。
+ *
+ * 现在每一条都在 `selftest-e2e-notes.mjs` 里过「坏输入必须判红 + 好输入必须判绿」。
+ * ⚠️ 这一轮**只搬家，不改判什么** —— 抽出过程中发现的两条空转已登记在
+ * `checkDeletedNoteWritesRejected()` / `classifyToolChecks()` 的注释里，判据没动。
+ */
+import {
+  checkAbsentFromList,
+  checkAppShell,
+  checkChineseSearchFindsSample,
+  checkDeletedNoteWritesRejected,
+  checkDeletionInvisible,
+  checkExportEnvelope,
+  checkFolderCreated,
+  checkFolderFilter,
+  checkLlmEndpointCalled,
+  checkMindmapEditPersisted,
+  checkMindmapJobSucceeded,
+  checkMindmapProvenance,
+  checkNoTimestamp,
+  checkNoteCreated,
+  checkNoteGone,
+  checkOffsetBeyondTotal,
+  checkRefQuoteVerbatim,
+  checkRefTimestamps,
+  checkRejection,
+  checkSearchModes,
+  checkSearchablePremise,
+  checkSegmentHit,
+  checkSeekWithinDuration,
+  checkSettingsRoundTrip,
+  checkSilentDegradation,
+  checkStarApplied,
+  checkStarredIsFilter,
+  checkStarredPagination,
+  checkTimestampFidelity,
+  checkTitleRoundTrip,
+  checkTokenizerDegraded,
+  checkTokenizerSelfReport,
+  checkToolProbesUsable,
+  checkTopicRefPresent,
+  checkUnknownDurationIsZero,
+  classifyToolChecks,
+  nodesWithNonce,
+  parseOutlineIndices,
+  uidsOfNotePage,
+  CHINESE_SEARCH_CHECK_ID,
+  ERROR_CODES,
+  EXPORT_EXPECTATIONS,
+} from './e2e-notes-assertions.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
@@ -193,6 +249,20 @@ function eq(actual, expected, msg) {
   const a = typeof actual === 'string' ? actual : JSON.stringify(actual);
   const e = typeof expected === 'string' ? expected : JSON.stringify(expected);
   ok(a === e, `${msg} —— 期望 ${brief(e)}，实得 ${brief(a)}`);
+}
+
+/**
+ * `e2e-notes-assertions.mjs` 的 `{ ok, reason }` → 本文件的 `AssertionFailed`。
+ *
+ * ★ **判据模块里一律不抛**（纯函数，好喂输入、好写证明），抛在这里。
+ *   经由 `ok()` ⇒ 抛的仍然是 `AssertionFailed` ⇒ `mutation()` 仍然分得开
+ *   「断言按设计判红」和「这条腿自己炸了」。这条接线断掉的表现是
+ *   **所有变异悄悄全变 MUT-UNKNOWN 而整条腿照样绿**，所以文件末尾那条
+ *   「至少一条 MUT-OK」的地板正是它的看门狗。
+ */
+function judge(verdict) {
+  ok(verdict?.ok === true, String(verdict?.reason ?? '判据没给理由 —— 它自己坏了'));
+  return verdict;
 }
 
 /** 记一条断言。抛了就是红，但**继续往下跑** —— 一条红不该掩盖后面的事实。 */
@@ -556,12 +626,14 @@ const llmState = {
 };
 
 function outlineFor(promptText) {
-  // `[12] 正文` 里的编号。**只收行首的**，避免把正文里的方括号也当编号。
-  const idx = [];
-  for (const line of promptText.split('\n')) {
-    const m = /^\[(\d+)\]\s/.exec(line);
-    if (m) idx.push(Number(m[1]));
-  }
+  /*
+   * `[12] 正文` 里的编号。**只收行首的**，避免把正文里的方括号也当编号。
+   * 解析器抽进了 `e2e-notes-assertions.mjs`：它对不上产品的 prompt 格式时，
+   * 整条 F4 会以「产品坏了」的形状变红，而真正坏的是夹具 ——
+   * 抽出来之后 `selftest-e2e-notes.mjs` 能正面钉住那个格式（含对着
+   * `buildUserPrompt()` 源码的契约守卫）。
+   */
+  const idx = parseOutlineIndices(promptText);
   if (idx.length === 0) return { topics: [] };
   /*
    * 刻意**优先挑非首段**：首段的 startMs 往往是 0，而 `0:00` / `0` 这种值
@@ -753,10 +825,14 @@ try {
   };
   const st = await j('/api/settings', jsonReq(settingsPatch, 'PATCH'));
   await check('F4-a1 PATCH /api/settings 配好 openai-compatible provider', () => {
-    eq(st.status, 200, 'PATCH /api/settings 状态码');
-    const s = st.body?.settings ?? {};
-    eq(s['llm.defaultProviderId'], PROVIDER_ID, '回读 llm.defaultProviderId');
-    eq(s[`llm.baseUrl.${PROVIDER_ID}`], LLM_BASE_URL, `回读 llm.baseUrl.${PROVIDER_ID}`);
+    judge(
+      checkSettingsRoundTrip({
+        status: st.status,
+        settings: st.body?.settings,
+        providerId: PROVIDER_ID,
+        baseUrl: LLM_BASE_URL,
+      }),
+    );
     return `provider=${PROVIDER_ID} baseUrl=${LLM_BASE_URL}`;
   });
 
@@ -771,18 +847,14 @@ try {
   say(`   导图 job：${genState.note}`);
 
   await check('F4-a2 导图 job 真的 succeeded（不是 blocked/failed）', () => {
-    eq(gen.status, 202, 'POST mindmap 状态码');
-    ok(typeof mmJobUid === 'string' && mmJobUid.length > 0, '没有 jobUid', gen.body);
-    ok(
-      genState.state === 'succeeded',
-      `job 没成功：${genState.note}${genState.blockedCode ? `（blockedCode=${genState.blockedCode}）` : ''}` +
-        (genState.error ? ` error=${brief(genState.error)}` : ''),
+    judge(
+      checkMindmapJobSucceeded({ postStatus: gen.status, jobUid: mmJobUid, jobState: genState }),
     );
     return `jobUid=${mmJobUid}`;
   });
 
   await check('F4-a3 产品真的向那个 HTTP 端点发了请求（不是凭空造图）', () => {
-    ok(llmState.chatCalls > 0, `假端点一次真请求都没收到（calls=${brief(llmState.calls)}）`);
+    judge(checkLlmEndpointCalled({ chatCalls: llmState.chatCalls, calls: llmState.calls }));
     return `chat/completions 真请求 ${llmState.chatCalls} 次 · 能力探测 ${llmState.probeCalls} 次 · /models ${llmState.modelsCalls} 次`;
   });
 
@@ -790,21 +862,26 @@ try {
   const doc = mm.body?.doc;
   const nodeList = Object.values(doc?.nodes ?? {});
   await check('F4-a4 GET 回来的导图带 llm 出处，且节点里有 nonce', () => {
-    eq(mm.status, 200, 'GET mindmap 状态码');
-    eq(mm.body?.mindmap?.generatedBy, `llm:${PROVIDER_ID}`, 'generatedBy');
-    const hit = nodeList.filter((n) => String(n.text ?? '').includes(NONCE));
-    ok(
-      hit.length > 0,
-      `没有任何节点包含 nonce ${NONCE}`,
-      nodeList.map((n) => n.text),
+    judge(
+      checkMindmapProvenance({
+        status: mm.status,
+        generatedBy: mm.body?.mindmap?.generatedBy,
+        nodes: nodeList,
+        nonce: NONCE,
+        providerId: PROVIDER_ID,
+      }),
     );
+    const hit = nodesWithNonce(nodeList, NONCE);
     return `nodeCount=${mm.body?.mindmap?.nodeCount} 带 nonce 的节点 ${hit.length} 个`;
   });
 
-  // 变异：nonce 换成一个从未出现过的串，同一条断言必须红。
+  /*
+   * 变异：nonce 换成一个从未出现过的串，**同一个 `nodesWithNonce()`** 必须查不到。
+   * 换的是输入，不是谓词 —— 另写一个谓词的话，被证明有区分力的就不是 F4-a4 用的那个了。
+   */
   await mutation('F4-a4 的证伪能力（换一个没用过的 nonce 必须查不到）', () => {
     const bogus = 'E2EMMDEADBEEF00';
-    const hit = nodeList.filter((n) => String(n.text ?? '').includes(bogus));
+    const hit = nodesWithNonce(nodeList, bogus);
     ok(hit.length > 0, `没有任何节点包含 nonce ${bogus}`);
   });
 
@@ -835,45 +912,39 @@ try {
    *    **1 段**，那种写法在这台机器上永远造不出变异体，于是这条证明会被静默跳过。
    *    平移法与段落数无关，任何转写稿上都成立。
    */
-  const timestampMatchesSeg = (ref, seg) => {
-    eq(Number(ref.startMs), Number(seg.startMs), 'refs[0].startMs');
-    eq(Number(ref.endMs), Number(seg.endMs), 'refs[0].endMs');
-  };
-
   await check('F4-a5 节点 refs 的时间戳 = 从转写稿独立算出来的真值（非循环）', () => {
-    ok(
-      !!topicNode && Array.isArray(topicNode.refs) && topicNode.refs.length > 0,
-      `找不到文本恰为「会议主题 ${NONCE}」且带 refs 的节点`,
-      nodeList.map((n) => n.text),
+    judge(
+      checkTopicRefPresent({
+        node: topicNode,
+        label: `会议主题 ${NONCE}`,
+        nodeTexts: nodeList.map((n) => n.text),
+        expectedSeg,
+        expectedIdx: topicIdx,
+      }),
     );
     const ref = topicNode.refs[0];
-    ok(
-      expectedSeg !== undefined,
-      `我回给产品的编号是 ${topicIdx}，但转写稿里没有这一段（共 ${trSegs.length} 段）`,
-    );
     say(
       `     期望值来自 trSegs[${topicIdx}]：startMs=${expectedStartMs} endMs=${expectedEndMs}` +
         `（**不是**从导图里读的）`,
     );
-    timestampMatchesSeg(ref, expectedSeg);
+    judge(checkRefTimestamps({ ref, seg: expectedSeg }));
     // quote 必须是原文逐字 —— 这是重转写后重定位的唯一依据（generate.ts 的设计约束）
-    const joined = trSegs.map((s) => String(s.text ?? '').trim()).join(' ');
-    ok(
-      joined.includes(String(ref.quote).trim().slice(0, 60)),
-      'refs[0].quote 不是转写稿里的原文逐字',
-      ref.quote,
-    );
-    eq(String(ref.transcriptUid), String(subject.transcriptUid), 'refs[0].transcriptUid');
+    judge(checkRefQuoteVerbatim({ ref, segments: trSegs, transcriptUid: subject.transcriptUid }));
     return `startMs=${expectedStartMs} endMs=${expectedEndMs}`;
   });
 
   // 变异：把同一个比对函数喂一个整体平移 1 秒的段落 —— 必须红。
   await mutation('F4-a5 的证伪能力（把段落整体平移 1 秒，同一个比对函数必须红）', () => {
     ok(!!topicNode && !!expectedSeg, 'F4-a5 本身就没跑成，变异无从谈起');
-    timestampMatchesSeg(topicNode.refs[0], {
-      startMs: Number(expectedSeg.startMs) + 1000,
-      endMs: Number(expectedSeg.endMs) + 1000,
-    });
+    judge(
+      checkRefTimestamps({
+        ref: topicNode.refs[0],
+        seg: {
+          startMs: Number(expectedSeg.startMs) + 1000,
+          endMs: Number(expectedSeg.endMs) + 1000,
+        },
+      }),
+    );
   });
 
   if (expectedStartMs === 0) {
@@ -897,16 +968,18 @@ try {
   );
   const mmAfter = await j(`/api/notes/${encodeURIComponent(subject.uid)}/mindmap`);
   await check('F4-b1 PATCH 之后 revision 前进、内容持久、出处转为 user', () => {
-    eq(patched.status, 200, 'PATCH mindmap 状态码');
-    ok(
-      Number(patched.body?.revision) > revBefore,
-      `revision 没前进（之前 ${revBefore}，之后 ${patched.body?.revision}）`,
+    judge(
+      checkMindmapEditPersisted({
+        patchStatus: patched.status,
+        patchRevision: patched.body?.revision,
+        patchMindmapUid: patched.body?.mindmapUid,
+        revisionBefore: revBefore,
+        rereadStatus: mmAfter.status,
+        rootText: mmAfter.body?.doc?.nodes?.[rootKey]?.text,
+        editMark: EDIT_MARK,
+        generatedBy: mmAfter.body?.mindmap?.generatedBy,
+      }),
     );
-    ok(typeof patched.body?.mindmapUid === 'string', '没有 mindmapUid', patched.body);
-    eq(mmAfter.status, 200, '回读 GET mindmap 状态码');
-    const rootText = String(mmAfter.body?.doc?.nodes?.[rootKey]?.text ?? '');
-    ok(rootText.includes(EDIT_MARK), '编辑没有落库', rootText);
-    eq(mmAfter.body?.mindmap?.generatedBy, 'user', '编辑后的 generatedBy');
     return `revision ${revBefore} → ${patched.body.revision}`;
   });
 
@@ -918,9 +991,16 @@ try {
       `/api/notes/${encodeURIComponent(subject.uid)}/mindmap`,
       jsonReq({ doc: badDoc }, 'PATCH'),
     );
-    ok(bad.status === 400, `期望 400，实得 HTTP ${bad.status}`, bad.body);
-    eq(bad.body?.error?.code, 'INVALID_MINDMAP', '错误码');
-    return `HTTP 400 INVALID_MINDMAP`;
+    judge(
+      checkRejection({
+        status: bad.status,
+        body: bad.body,
+        expectStatus: 400,
+        expectCode: ERROR_CODES.invalidMindmap,
+        label: '非法 doc 的 PATCH',
+      }),
+    );
+    return `HTTP 400 ${ERROR_CODES.invalidMindmap}`;
   });
 
   /* ───────────────── 6. F4-c：四种结构化导出 ───────────────── */
@@ -963,14 +1043,14 @@ try {
   say(`   为导出判据 PATCH 了一个合成 ref（${TS_MS}ms → ${TS_TEXT}）：HTTP ${tsPatch.status}`);
   ok(tsPatch.status === 200, `合成 ref 没写进去：HTTP ${tsPatch.status} ${brief(tsPatch.body)}`);
 
-  const EXPECT = {
-    md: { ct: 'text/markdown; charset=utf-8', ts: true },
-    opml: { ct: 'text/x-opml; charset=utf-8', ts: false },
-    mm: { ct: 'application/x-freemind; charset=utf-8', ts: false },
-    json: { ct: 'application/json; charset=utf-8', ts: true },
-  };
+  /*
+   * 四种导出各自的 `content-type` 与「时间戳带不带得走」——
+   * 抽进 `e2e-notes-assertions.mjs` 的 `EXPORT_EXPECTATIONS`，
+   * 由 `selftest-e2e-notes.mjs` 对着 `content.ts` 的 `exportMindmap()` 逐格核。
+   */
+  const EXPECT = EXPORT_EXPECTATIONS;
   const exported = {};
-  for (const fmt of ['md', 'opml', 'mm', 'json']) {
+  for (const fmt of Object.keys(EXPECT)) {
     const r = await j(
       `/api/notes/${encodeURIComponent(subject.uid)}/export?what=mindmap&format=${fmt}`,
     );
@@ -992,36 +1072,29 @@ try {
   const bodyOf = (fmt) =>
     typeof exported[fmt].body === 'string' ? exported[fmt].body : exported[fmt].text;
 
-  for (const fmt of ['md', 'opml', 'mm', 'json']) {
+  for (const fmt of Object.keys(EXPECT)) {
     await check(`F4-c1(${fmt}) 200 + content-type 正确 + 正文里有 nonce`, () => {
-      eq(exported[fmt].status, 200, `format=${fmt} 状态码`);
-      eq(exported[fmt].headers['content-type'], EXPECT[fmt].ct, `format=${fmt} content-type`);
-      const b = bodyOf(fmt);
-      ok(b.length > 0, `format=${fmt} 正文是空的`);
-      ok(b.includes(NONCE), `format=${fmt} 正文里没有 nonce ${NONCE}`, b.slice(0, 200));
-      return `${b.length} 字符`;
+      judge(
+        checkExportEnvelope({
+          fmt,
+          status: exported[fmt].status,
+          contentType: exported[fmt].headers['content-type'],
+          body: bodyOf(fmt),
+          nonce: NONCE,
+        }),
+      );
+      return `${bodyOf(fmt).length} 字符`;
     });
   }
 
-  /*
-   * 「这份导出里没有时间戳」这个谓词**只写一遍**，F4-c2 与它的变异证明共用同一个。
-   * 两处各写一份的话，变异证明的就不是 F4-c2 实际用的那个谓词了 ——
-   * 而"断言的是报出来的值、不是实际用的值"正是本仓栽过的第二种假绿。
-   */
-  const noTimestampPredicate = (body, label) => {
-    ok(
-      body.includes(TS_TEXT) === false && body.includes(String(TS_MS)) === false,
-      `${label} 里出现了时间戳（${TS_TEXT} 或 ${TS_MS}）—— 界面上那句损耗说明该改了`,
-    );
-  };
-
   await check('F4-c2 时间戳只有 md 与 json 带得走（今天仍然成立）', () => {
-    const md = bodyOf('md');
-    const jsonB = bodyOf('json');
-    ok(md.includes(`[${TS_TEXT}]`), `md 里没有 [${TS_TEXT}]`, md.slice(0, 400));
-    ok(jsonB.includes(String(TS_MS)), `json 里没有 ${TS_MS}`, jsonB.slice(0, 400));
-    noTimestampPredicate(bodyOf('opml'), 'opml');
-    noTimestampPredicate(bodyOf('mm'), 'mm');
+    judge(
+      checkTimestampFidelity({
+        bodies: Object.fromEntries(Object.keys(EXPECT).map((f) => [f, bodyOf(f)])),
+        timecode: TS_TEXT,
+        ms: TS_MS,
+      }),
+    );
     return `md 有 [${TS_TEXT}] · json 有 ${TS_MS} · opml/mm 都没有`;
   });
 
@@ -1044,16 +1117,23 @@ try {
    *   不需要再用一条别扭的变异去重复说。）
    */
   await mutation('F4-c2 的证伪能力（把"没有时间戳"这个谓词拿去量 md，必须红）', () => {
-    noTimestampPredicate(bodyOf('md'), 'md');
+    judge(checkNoTimestamp({ body: bodyOf('md'), label: 'md', timecode: TS_TEXT, ms: TS_MS }));
   });
 
   await check('F4-c3 未知 format 被拒（400 BAD_FORMAT），不是静默回落到 md', async () => {
     const r = await j(
       `/api/notes/${encodeURIComponent(subject.uid)}/export?what=mindmap&format=xyzzy`,
     );
-    eq(r.status, 400, '未知 format 的状态码');
-    eq(r.body?.error?.code, 'BAD_FORMAT', '错误码');
-    return 'HTTP 400 BAD_FORMAT';
+    judge(
+      checkRejection({
+        status: r.status,
+        body: r.body,
+        expectStatus: 400,
+        expectCode: ERROR_CODES.badFormat,
+        label: '未知 format',
+      }),
+    );
+    return `HTTP 400 ${ERROR_CODES.badFormat}`;
   });
 
   /* ───────────────── 7. F5-a：笔记增删改查 ───────────────── */
@@ -1071,33 +1151,51 @@ try {
   );
   const newUid = created.body?.noteUid;
   await check('F5-a1 POST /api/notes/import 真的建出一条笔记', () => {
-    eq(created.status, 202, 'import 状态码');
-    ok(typeof newUid === 'string' && newUid.length === 26, '没有合法的 noteUid', created.body);
+    judge(checkNoteCreated({ status: created.status, noteUid: newUid }));
     return `noteUid=${newUid}`;
   });
 
   await check('F5-a2 PATCH 改标题 → GET 读得回来', async () => {
     const t2 = `E2E 改过的标题 ${NONCE}`;
     const p = await j(`/api/notes/${encodeURIComponent(newUid)}`, jsonReq({ title: t2 }, 'PATCH'));
-    eq(p.status, 200, 'PATCH note 状态码');
     const g = await j(`/api/notes/${encodeURIComponent(newUid)}`);
-    eq(g.status, 200, 'GET note 状态码');
-    eq(g.body?.title, t2, '标题');
+    judge(
+      checkTitleRoundTrip({
+        patchStatus: p.status,
+        getStatus: g.status,
+        title: g.body?.title,
+        expectTitle: t2,
+      }),
+    );
     return t2;
   });
 
   // 媒体未加载完这一档的**服务端半条链**（见第 10 节）：现在就把它取下来。
   const freshDetail = await j(`/api/notes/${encodeURIComponent(newUid)}`);
 
+  /*
+   * 🔴 **这条检查的名字比它做的事多一半**（登记，本轮不改判据）：
+   *   id 说「PUT /star **与 PUT /folder** 各自生效」，而函数体里**一个字都没提 folder**。
+   *   `PUT /folder` 真正被验到是在第 8 节的 F5-b1（建文件夹 → 移入 → 按 folder 筛）。
+   *   ⇒ 把 `PUT /folder` 整条路由弄坏，这一格照样绿，而总表上它的名字仍然写着 folder。
+   *   本仓四种失效形态里的第④种：**注释型断言 —— 声称一件从没发生的事**。
+   *
+   * ⚠️ 只改名字不动判据是最小修法，但 id 会进凭证与总表，改它要跟 attest 那侧对一遍，
+   *   不在这一轮的范围（这一轮是让判据可测）。已上报。
+   */
   await check('F5-a3 PUT /star 与 PUT /folder 各自生效', async () => {
     const s = await j(
       `/api/notes/${encodeURIComponent(newUid)}/star`,
       jsonReq({ starred: true }, 'PUT'),
     );
-    eq(s.status, 200, 'PUT star 状态码');
-    eq(s.body?.starred, true, 'starred 回执');
     const g = await j(`/api/notes/${encodeURIComponent(newUid)}`);
-    eq(g.body?.starred, true, '回读 starred');
+    judge(
+      checkStarApplied({
+        putStatus: s.status,
+        putStarred: s.body?.starred,
+        rereadStarred: g.body?.starred,
+      }),
+    );
     return 'starred=true';
   });
 
@@ -1108,21 +1206,26 @@ try {
 
   let deletedGet = null;
   await check('F5-a4 DELETE 之后：列表里没有了、搜索也搜不到了', async () => {
-    // 前提：删之前**搜得到** —— 否则"删完搜不到"是恒真的。
+    /*
+     * 前提：删之前**搜得到** —— 否则"删完搜不到"是恒真的。
+     * ⚠️ 这一格必须在 DELETE **之前**判：前提不成立时不该把笔记删掉，
+     *    否则后面 F5-a5 / F5-a6 会在一个半拉状态上判红，指错方向。
+     */
     const before = (beforeDel.body?.hits ?? []).filter((h) => h.noteUid === newUid);
-    ok(before.length > 0, '删之前就搜不到这条笔记 —— 那"删完搜不到"就是句空话');
+    judge(checkSearchablePremise({ hits: beforeDel.body?.hits, noteUid: newUid }));
 
     const d = await j(`/api/notes/${encodeURIComponent(newUid)}`, { method: 'DELETE' });
-    eq(d.status, 200, 'DELETE 状态码');
-    eq(d.body?.ok, true, 'ok');
-
     const l = await j('/api/notes?limit=200');
-    const still = (l.body?.notes ?? []).some((n) => n.uid === newUid);
-    eq(still, false, '删除后仍出现在列表里');
-
     const after = await j(`/api/search?q=${encodeURIComponent(DEL_WORD)}&limit=20`);
-    const mine = (after.body?.hits ?? []).filter((h) => h.noteUid === newUid);
-    eq(mine.length, 0, '删除后仍然搜得到');
+    judge(
+      checkDeletionInvisible({
+        deleteStatus: d.status,
+        deleteOk: d.body?.ok,
+        listUids: uidsOfNotePage(l),
+        afterHits: after.body?.hits,
+        noteUid: newUid,
+      }),
+    );
 
     deletedGet = await j(`/api/notes/${encodeURIComponent(newUid)}`);
     return `不在列表里、搜不到（删前搜得到 ${before.length} 条）`;
@@ -1144,9 +1247,8 @@ try {
    */
   await check('F5-a5 ★ 软删之后 GET 这条笔记回 404 —— 与列表、搜索口径一致', () => {
     ok(!!deletedGet, 'F5-a4 没跑成，这条无从谈起');
-    eq(deletedGet.status, 404, '已删除笔记的 GET 状态码');
-    eq(deletedGet.body?.error?.code, 'NOTE_NOT_FOUND', '错误码');
-    return 'HTTP 404 NOTE_NOT_FOUND';
+    judge(checkNoteGone({ status: deletedGet.status, body: deletedGet.body }));
+    return `HTTP 404 ${ERROR_CODES.noteNotFound}`;
   });
 
   /*
@@ -1160,23 +1262,35 @@ try {
         `/api/notes/${encodeURIComponent(newUid)}`,
         jsonReq({ title: '不该改得动' }, 'PATCH'),
       );
-      eq(patch.status, 404, '改标题的状态码');
       const star = await j(
         `/api/notes/${encodeURIComponent(newUid)}/star`,
         jsonReq({ starred: true }, 'PUT'),
       );
-      eq(star.status, 404, '打星标的状态码');
       const exp = await j(`/api/notes/${encodeURIComponent(newUid)}/export?what=mindmap&format=md`);
-      eq(exp.status, 404, '导出的状态码');
+      /*
+       * 🔴 `exportStatus` 那一格今天**证明不了任何东西**（登记在
+       *    `checkDeletedNoteWritesRejected()` 的注释里，判据没动）：
+       *    这条哑笔记从来没生成过导图，`content.ts` 对"笔记在、导图不在"也回 404
+       *    （`NO_MINDMAP`）。把软删守卫从导出路由整个抽掉，这一格照样绿。
+       */
+      judge(
+        checkDeletedNoteWritesRejected({
+          patchStatus: patch.status,
+          starStatus: star.status,
+          exportStatus: exp.status,
+        }),
+      );
       return 'PATCH / PUT star / export 全是 404';
     },
   );
 
-  // 变异：同一条"必须 404"的谓词拿去量一条**活着的**笔记 —— 必须红。
-  // 否则"删掉的回 404"可能只是因为这个 uid 从来就不存在（拼错也 404）。
+  /*
+   * 变异：**同一个 `checkNoteGone()`** 拿去量一条**活着的**笔记 —— 必须红。
+   * 否则"删掉的回 404"可能只是因为这个 uid 从来就不存在（拼错也 404）。
+   */
   await mutation('F5-a5 的证伪能力（拿活着的笔记去量"必须 404"，必须红）', async () => {
     const alive = await j(`/api/notes/${encodeURIComponent(subject.uid)}`);
-    eq(alive.status, 404, '活着的笔记的 GET 状态码');
+    judge(checkNoteGone({ status: alive.status, body: alive.body }));
   });
 
   /* ───────────────── 8. F5-b：文件夹筛选 ───────────────── */
@@ -1197,33 +1311,44 @@ try {
    * 变异用它去量**文件夹内**的那一条（必须在，所以谓词会红）。
    * 同一个谓词、两个已知答案相反的输入 —— 这才叫证明它有区分力。
    */
-  const absentFromFolder = (list, uid, label) => {
-    const uids = (list.body?.notes ?? []).map((n) => n.uid);
-    ok(uids.includes(uid) === false, `${label} 居然出现在该文件夹的筛选结果里`);
-  };
   let folderList = null;
   await check('F5-b1 ?folder=<uid> 只返回该文件夹里的笔记（文件夹外的一条都不带）', async () => {
-    eq(folderRes.status, 201, 'POST /api/folders 状态码');
-    ok(typeof folderUid === 'string', '没有文件夹 uid', folderRes.body);
+    judge(checkFolderCreated({ status: folderRes.status, folderUid }));
     folderList = await j(`/api/notes?folder=${encodeURIComponent(folderUid)}&limit=200`);
-    eq(folderList.status, 200, '按 folder 筛的状态码');
-    const uids = (folderList.body?.notes ?? []).map((n) => n.uid);
-    eq(uids.includes(inFolderUid), true, '筛出来的结果里没有那条笔记');
     // 主角笔记（jfk）在根目录，绝不该出现在这个文件夹里。
-    absentFromFolder(folderList, subject.uid, '主角笔记（不在该文件夹里）');
-    eq(folderList.body?.total, 1, '该文件夹里的 total');
+    judge(
+      checkFolderFilter({
+        page: folderList,
+        insiderUid: inFolderUid,
+        outsiderUid: subject.uid,
+        expectTotal: 1,
+      }),
+    );
     return `folder=${folderUid} total=${folderList.body?.total}`;
   });
 
   await mutation('F5-b1 的证伪能力（同一个"不在结果里"谓词量文件夹内那条，必须红）', () => {
-    absentFromFolder(folderList, inFolderUid, '文件夹内那条笔记');
+    judge(
+      checkAbsentFromList({
+        page: folderList,
+        uid: inFolderUid,
+        label: '文件夹内那条笔记',
+      }),
+    );
   });
 
   await check('F5-b2 不存在的 folder uid 被拒（400），不是静默回落到"全部"', async () => {
     const l = await j('/api/notes?folder=00000000000000000000000000');
-    eq(l.status, 400, '未知 folder 的状态码');
-    eq(l.body?.error?.code, 'BAD_QUERY_PARAM', '错误码');
-    return 'HTTP 400 BAD_QUERY_PARAM';
+    judge(
+      checkRejection({
+        status: l.status,
+        body: l.body,
+        expectStatus: 400,
+        expectCode: ERROR_CODES.badQueryParam,
+        label: '未知 folder',
+      }),
+    );
+    return `HTTP 400 ${ERROR_CODES.badQueryParam}`;
   });
 
   /* ───────────────── 9. F5-c：星标 + 分页边界 ───────────────── */
@@ -1273,23 +1398,17 @@ try {
   );
 
   await check('F5-c1 ★ 星标分页真的跨过了第 50 条，且一条都不少', () => {
-    for (const [i, p] of pages.entries()) eq(p.status, 200, `第 ${i + 1} 页状态码`);
+    judge(checkStarredPagination({ pages, pageSize: PAGE, oldestStarredUid: oldestStarred }));
     const total = Number(page1.body?.total);
-    // 非空虚前提：total 必须真的超过一页，否则整条断言恒真、边界根本没跑到。
-    ok(total > PAGE, `starred total=${total} 没超过一页 —— 这条边界根本没跑到`, page1.body);
-    eq(page1.body?.notes?.length, PAGE, '第 1 页条数（必须满页）');
-    eq(page1.body?.hasMore, true, '第 1 页 hasMore');
-    ok(pages.length >= 2, `只翻出 ${pages.length} 页 —— 第 50 条之后那一档没被走到`);
-    eq(seen.size, total, '所有页并起来的去重条数 ≠ total（有笔记被静默吞掉了）');
-    // 最早建的那条在最后一页 —— 正是老 bug（limit 先切、starred 后筛）会吞掉的那条。
-    eq(seen.has(oldestStarred), true, '最早那条星标笔记一页都没出现 —— 这就是那个事故');
-    eq(pages[pages.length - 1].body?.hasMore, false, '最后一页 hasMore');
     return `total=${total}，翻 ${pages.length} 页覆盖 ${seen.size} 条，含最早那条`;
   });
 
-  // 变异：只看第一页（老 bug 的行为）时，最早那条**必须**不在 —— 证明边界真的跨过了。
+  /*
+   * 变异：只看第一页（老 bug 的行为）时，最早那条**必须**不在 —— 证明边界真的跨过了。
+   * 用的是 `checkStarredPagination()` 内部同一个 `uidsOfNotePage()`。
+   */
   await mutation('F5-c1 的证伪能力（只看第一页时，最早那条星标笔记必须查不到）', () => {
-    const firstPageUids = new Set((page1.body?.notes ?? []).map((n) => n.uid));
+    const firstPageUids = new Set(uidsOfNotePage(page1));
     eq(firstPageUids.has(oldestStarred), true, '最早那条星标笔记在第 1 页里');
   });
 
@@ -1297,23 +1416,39 @@ try {
     const all = await j('/api/notes?limit=1');
     const totalAll = Number(all.body?.total);
     const totalStar = Number(page1.body?.total);
-    ok(totalStar < totalAll, `starred total=${totalStar} 不小于全量 total=${totalAll}`);
-    ok(totalAll - totalStar >= 3, `没加星的至少该有 3 条，实际差 ${totalAll - totalStar}`);
+    judge(checkStarredIsFilter({ totalAll, totalStarred: totalStar, minUnstarred: 3 }));
     return `全量 ${totalAll} · 星标 ${totalStar}`;
   });
 
+  /*
+   * ⚠️ 这一条**刻意只钉状态码、不钉错误码**，与抽出前逐字一致
+   *   （`expectCode: null`）。要不要连 `BAD_QUERY_PARAM` 一起钉是「改判什么」，
+   *   不在这一轮。
+   */
   await check('F5-c3 ?starred=0 被拒（400），不是被读成"未加星的"', async () => {
     const r = await j('/api/notes?starred=0');
-    eq(r.status, 400, '?starred=0 的状态码');
+    judge(
+      checkRejection({
+        status: r.status,
+        body: r.body,
+        expectStatus: 400,
+        expectCode: null,
+        label: '?starred=0',
+      }),
+    );
     return 'HTTP 400';
   });
 
   await check('F5-c4 offset 越过 total 时返回空页而不是报错或绕回第一页', async () => {
     const total = Number(page1.body?.total);
     const r = await j(`/api/notes?starred=1&limit=50&offset=${total + 100}`);
-    eq(r.status, 200, '越界 offset 的状态码');
-    eq(r.body?.notes?.length, 0, '越界 offset 的条数');
-    eq(r.body?.hasMore, false, '越界 offset 的 hasMore');
+    judge(
+      checkOffsetBeyondTotal({
+        status: r.status,
+        notes: r.body?.notes,
+        hasMore: r.body?.hasMore,
+      }),
+    );
     return `offset=${total + 100} → 0 条`;
   });
 
@@ -1343,12 +1478,7 @@ try {
   }
 
   await check('F5-d1 ★ 四个中文两字词都搜得到本次样本（这条最容易静默坏）', () => {
-    for (const w of CN_WORDS) {
-      const r = cnHits[w];
-      eq(r.status, 200, `q=${w} 状态码`);
-      const mine = (r.body?.hits ?? []).filter((h) => h.noteUid === cnUid);
-      ok(mine.length > 0, `「${w}」搜不到本次样本 —— 多半是 tokenizer 退回了 trigram`);
-    }
+    judge(checkChineseSearchFindsSample({ responses: cnHits, words: CN_WORDS, noteUid: cnUid }));
     return CN_WORDS.map((w) => `${w}:${(cnHits[w].body?.hits ?? []).length}`).join(' ');
   });
 
@@ -1363,29 +1493,40 @@ try {
    */
   await check('F5-d2 /api/search 自报 modes.tokenizer=simple', () => {
     const m = cnHits[CN_WORDS[0]].body?.modes ?? {};
-    eq(m.tokenizer, 'simple', 'modes.tokenizer');
-    eq(m.keyword, true, 'modes.keyword');
+    judge(checkSearchModes({ modes: m, expectTokenizer: 'simple', requireKeyword: true }));
     return JSON.stringify(m);
   });
 
   await check('F5-d3 /api/health 与 /api/selfcheck 也说分词器是 simple', async () => {
     const h = await j('/api/health');
     const e = h.body?.db?.extensions ?? {};
-    eq(e.tokenizer, 'simple', 'health.db.extensions.tokenizer');
-    eq(e.libsimple, true, 'health.db.extensions.libsimple');
     const sc = await j('/api/selfcheck');
     const checks = sc.body?.checks ?? sc.body?.results ?? [];
-    const cn = checks.find((c) => c.id === 'ext.chineseSearch');
-    ok(!!cn, '/api/selfcheck 里没有 ext.chineseSearch 这一项 —— 判据本身不见了');
-    eq(cn.status, 'ok', 'ext.chineseSearch 状态');
-    return `tokenizer=${e.tokenizer} ext.chineseSearch=${cn.status} · ${brief(cn.detail)}`;
+    judge(
+      checkTokenizerSelfReport({
+        healthExtensions: e,
+        selfcheckChecks: checks,
+        expectTokenizer: 'simple',
+      }),
+    );
+    const cn = checks.find((c) => c.id === CHINESE_SEARCH_CHECK_ID);
+    return `tokenizer=${e.tokenizer} ${CHINESE_SEARCH_CHECK_ID}=${cn.status} · ${brief(cn.detail)}`;
   });
 
-  // 变异：一个语料里没有的两字词必须搜不到本次样本 —— 证明搜索不是"什么都返回"。
+  /*
+   * 变异：**同一个 `checkChineseSearchFindsSample()`** 拿去量一个语料里没有的两字词，
+   * 必须红 —— 证明搜索不是"什么都返回"，也证明这条判据不是恒真。
+   */
   await mutation('F5-d1 的证伪能力（语料里没有的两字词必须搜不到）', async () => {
-    const r = await j(`/api/search?q=${encodeURIComponent('紫檀')}&limit=50`);
-    const mine = (r.body?.hits ?? []).filter((h) => h.noteUid === cnUid);
-    ok(mine.length > 0, `「紫檀」搜不到本次样本（这条变异本就该红）`);
+    const absent = '紫檀';
+    const r = await j(`/api/search?q=${encodeURIComponent(absent)}&limit=50`);
+    judge(
+      checkChineseSearchFindsSample({
+        responses: { [absent]: r },
+        words: [absent],
+        noteUid: cnUid,
+      }),
+    );
   });
 
   /* ───────────────── 11. F5-e：搜索结果跳时间点（?t=）的服务端半条链 ────────── */
@@ -1429,11 +1570,7 @@ try {
   }
 
   await check('F5-e1 segment 命中带得回可用的 startMs（?t= 的取值来源）', () => {
-    ok(!!probeWord, '转写稿里挑不出探针词');
-    ok(!!segHit, `没有拿到 source=segment 的命中`, (searchForT?.body?.hits ?? []).slice(0, 3));
-    ok(Number.isInteger(segHit.startMs), 'startMs 不是整数', segHit.startMs);
-    ok(segHit.startMs >= 0, 'startMs 是负数', segHit.startMs);
-    ok(typeof segHit.transcriptUid === 'string', 'segment 命中没有 transcriptUid', segHit);
+    judge(checkSegmentHit({ probeWord, hit: segHit, hits: searchForT?.body?.hits }));
     return `startMs=${segHit.startMs} seq=${segHit.seq}`;
   });
 
@@ -1444,24 +1581,18 @@ try {
       const dur = Number(d.body?.durationMs ?? 0);
       // 上界必须是正数：parseSeekParam 明写 durationMs<=0 时**不夹取**，
       // 也就是说上界一旦是 0，"越界夹到末尾"这条产品行为在结构上不可能发生。
-      ok(dur > 0, `durationMs=${dur} —— 上界不存在，越界夹取无从谈起`);
-      ok(!!segHit, '没有 segment 命中，这条无从谈起');
-      ok(
-        segHit.startMs <= dur,
-        `命中的 startMs=${segHit.startMs} 超过了 durationMs=${dur} —— 那样点进去就会被夹到末尾`,
-      );
+      judge(checkSeekWithinDuration({ hit: segHit, durationMs: dur }));
       return `startMs=${segHit.startMs} ≤ durationMs=${dur}`;
     },
   );
 
   await check('F5-e3 媒体未加载完边界：时长未知时服务端如实回 0，不编一个数', () => {
     // freshDetail 是第 7 节刚导入、转写还没做完时取的那一份。
-    eq(freshDetail.status, 200, '刚导入时 GET note 的状态码');
-    const dur = Number(freshDetail.body?.durationMs ?? 0);
-    ok(
-      dur === 0,
-      `刚导入的笔记 durationMs=${dur} —— 时长还不该知道。` +
-        `编一个非零上界会让 parseSeekParam 把对的 ?t= 夹坏`,
+    judge(
+      checkUnknownDurationIsZero({
+        status: freshDetail.status,
+        durationMs: freshDetail.body?.durationMs,
+      }),
     );
     return `durationMs=0（parseSeekParam 据此不夹取，正是它注释里写的那条）`;
   });
@@ -1487,21 +1618,18 @@ try {
     const r = await j(`/notes/${encodeURIComponent(subject.uid)}?t=${segHit?.startMs ?? 0}`, {
       headers: navHeaders,
     });
-    eq(r.status, 200, '深链状态码');
     const html = typeof r.body === 'string' ? r.body : r.text;
-    ok(
-      /<div[^>]+id=["']root["']/.test(html) || html.includes('<script'),
-      '返回的不像应用外壳',
-      html.slice(0, 200),
-    );
+    judge(checkAppShell({ status: r.status, html }));
     return `HTTP 200，${html.length} 字符的应用外壳`;
   });
 
-  // 变异：同一条深链用**非导航**请求（裸 fetch）必须**不是** 200 ——
-  // 证明上面那个 200 是 SPA 兜底给的，而不是"什么路径都回 200"。
+  /*
+   * 变异：**同一个 `checkAppShell()`** 量一条用**非导航**请求（裸 fetch）打来的深链，
+   * 必须红 —— 证明上面那个 200 是 SPA 兜底给的，而不是"什么路径都回 200"。
+   */
   await mutation('F5-e4 的证伪能力（非导航请求打同一条深链，不该拿到应用外壳）', async () => {
     const r = await j(`/notes/${encodeURIComponent(subject.uid)}?t=0`);
-    eq(r.status, 200, '非导航深链状态码');
+    judge(checkAppShell({ status: r.status, html: typeof r.body === 'string' ? r.body : r.text }));
   });
 
   /* ───────────────── 12. 借了宿主几个 ───────────────── */
@@ -1509,7 +1637,6 @@ try {
   hdr('12. 借宿主工具几个 —— 用产品自己的判据（GET /api/selfcheck）');
   const sc = await j('/api/selfcheck');
   const checks = sc.body?.checks ?? sc.body?.results ?? [];
-  const tools = checks.filter((c) => String(c.id).startsWith('tool.'));
   /*
    * ★ 空集守卫。没有这一句时，拿不到自检结果会让下面整段打印出
    * 「✅ 产品自己下载并校验的 (0)」「❌ 装不上/不可用 (0)」，并以
@@ -1521,16 +1648,14 @@ try {
    * ⚠️ 本文件 120 行之前就守过同一个形状（`ok(!!cn, '判据本身不见了')`）。
    * 用同一个 `ok()`，让它按本文件的规矩红。
    */
-  ok(
-    sc.status === 200 && tools.length > 0,
-    `拿不到 tool.* 自检项（HTTP ${sc.status}，共 ${checks.length} 项、tool.* ${tools.length} 项）` +
-      ` —— 下面那句「借了宿主 N 个」会变成一句假话`,
-  );
-  const own = tools.filter((c) => c.status === 'ok');
-  const borrowed = tools.filter((c) => c.status === 'warn' && /PATH/i.test(String(c.detail ?? '')));
-  const missing = tools.filter(
-    (c) => c.status === 'fail' || (c.status === 'warn' && !/PATH/i.test(String(c.detail ?? ''))),
-  );
+  judge(checkToolProbesUsable({ status: sc.status, checks }));
+  /*
+   * 🔴 `borrowed` 那一档是**拿散文当判据**（`/PATH/i.test(detail)`）——
+   *    已登记在 `classifyToolChecks()` 的注释里，判据没动。
+   *    daemon 那句中文改一个词，这一档就恒为 0，而末尾那句
+   *    「本轮结论：借了宿主 0 个」会朝着"更干净"的方向说假话，没有东西会红。
+   */
+  const { own, borrowed, missing } = classifyToolChecks(checks);
   say(`   ✅ 产品自己下载并校验的 (${own.length})：${own.map((c) => c.id).join(', ') || '(无)'}`);
   say(
     `   ⚠️ 借宿主 PATH 的       (${borrowed.length})：${borrowed.map((c) => c.id).join(', ') || '(无)'}`,
@@ -1567,8 +1692,7 @@ try {
     );
 
     await check('MUT-0 变异实例确实退化成了 trigram（变异体本身成立）', () => {
-      eq(me.libsimple, false, '变异实例的 libsimple');
-      eq(me.tokenizer, 'trigram', '变异实例的 tokenizer');
+      judge(checkTokenizerDegraded({ extensions: me }));
       return 'tokenizer=trigram libsimple=false';
     });
 
@@ -1595,32 +1719,31 @@ try {
       );
     }
 
-    // ★★ 这是全脚本最值钱的一条：**把 F5-d1 那条断言原样搬过来量变异体，要求它红。**
+    /*
+     * ★★ 全脚本最值钱的一条：**把 F5-d1 那条断言原样搬过来量变异体，要求它红。**
+     *
+     * 抽出来之后这句"原样"第一次是字面意义上的 —— 两边调的是同一个
+     * `checkChineseSearchFindsSample()`。抽出来之前那是两段抄写，
+     * 而两段抄写只要有一段被改动，这条证明就悄悄变成了"证明另一条断言有牙齿"。
+     */
     await mutation('★ F5-d1 的证伪能力（没有 libsimple 时，同一条断言必须红）', () => {
-      for (const w of CN_WORDS) {
-        const r = mutHits[w];
-        eq(r.status, 200, `q=${w} 状态码`);
-        const mine = (r.body?.hits ?? []).filter((h) => h.noteUid === mnUid);
-        ok(mine.length > 0, `「${w}」搜不到本次样本 —— 多半是 tokenizer 退回了 trigram`);
-      }
+      judge(checkChineseSearchFindsSample({ responses: mutHits, words: CN_WORDS, noteUid: mnUid }));
     });
 
     await check('MUT-1 静默：没有 libsimple 时搜索仍然 HTTP 200，只是 0 条（不报错）', () => {
-      for (const w of CN_WORDS) {
-        eq(mutHits[w].status, 200, `q=${w} 在变异实例上的状态码`);
-        ok(
-          mutHits[w].body?.error === undefined,
-          `q=${w} 居然报错了 —— 那反倒说明它不静默`,
-          mutHits[w].body?.error,
-        );
-      }
-      return '四个词全是 HTTP 200 + 0 条本样本命中，一个错都不报 —— 这就是那个静默';
+      judge(checkSilentDegradation({ responses: mutHits, words: CN_WORDS }));
+      /*
+       * ⚠️ 这句 detail 里的「0 条本样本命中」**不是这一格断言的** ——
+       *   它由上一条变异（`★ F5-d1 的证伪能力`）判到 MUT-OK 来保证。
+       *   这一格只钉"HTTP 200 + 一个错都不报"，也就是那个**静默**本身。
+       */
+      return '四个词全是 HTTP 200，一个错都不报（0 条本样本命中由上一条变异保证）—— 这就是那个静默';
     });
 
     // ★ 同一次键名收口（T-200 A-2）：变异实例退化时 modes.tokenizer 应如实报 'trigram'。
     await check('MUT-2 变异实例上 modes.tokenizer 如实报 trigram', () => {
       const m = mutHits[CN_WORDS[0]].body?.modes ?? {};
-      eq(m.tokenizer, 'trigram', '变异实例的 modes.tokenizer');
+      judge(checkSearchModes({ modes: m, expectTokenizer: 'trigram' }));
       return 'tokenizer=trigram';
     });
   } finally {
