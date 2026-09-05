@@ -11,11 +11,7 @@ import type {
   ActivateResponse,
   GcRequest,
   GcResponse,
-  GetCatalogResponse,
-  GetInstalledResponse,
   GetSourcesResponse,
-  GetStorageResponse,
-  ModelRole,
   PullRequest,
   PullResponse,
   SelectSourceRequest,
@@ -23,38 +19,27 @@ import type {
 } from '@openmemo/shared';
 
 import { api } from '../../lib/api/client';
-import { qk, STALE_TIME_OVERRIDES } from '../../app/query';
+import { qk } from '../../app/query';
 import { notifyJobAttached } from '../../lib/jobs/attachedNotice';
 
-/**
- * @param lang 用户打算转写的语言。服务端据此把"实测在该语言下不可用"的模型
- *             标为 `notRecommendedForLanguage`（ADR-011 决策 1）。
+/*
+ * ★ 目录 / 已安装 / 存储这三条查询的**实现在 `lib/api/models.ts`**（唯一一份），
+ *   这里只再导出 —— 与本文件下面 `useJobsQuery` 那条、以及 `features/runtime/api.ts`
+ *   的 `useHardwareQuery` 完全同一个做法，调用点一个字都不用改。
+ *
+ *   搬家的理由不是整洁：`qk.models.installed` 上曾经挂着三个 `useQuery`、两种 `queryFn`
+ *   （这里一份裸 `api()`，`AsrModelPicker` 两份带 surface 的），
+ *   而 react-query 只执行**先挂载的那一个** ⇒ 哪个 API 面被标成已接通，
+ *   取决于用户先打开哪个页面。`qk.models.storage` 是同一个坑的第二例
+ *   （这里裸 `api()` vs `features/settings/DataLocationSection.tsx` 带 `'models'`），
+ *   是新加的那道守卫扫出来的，不在原始清单里。
+ *   完整说明写在 `lib/api/models.ts` 的文件头。
  */
-export function useModelsCatalogQuery(role: ModelRole | 'all' = 'all', lang?: string) {
-  return useQuery({
-    queryKey: [...qk.models.catalog, role, lang ?? ''],
-    queryFn: () =>
-      api<GetCatalogResponse>(
-        `/models/catalog?role=${role}${lang ? `&lang=${encodeURIComponent(lang)}` : ''}`,
-      ),
-    // 目录带 ETag 缓存，放宽 staleTime（app/query.ts 的约定）
-    staleTime: STALE_TIME_OVERRIDES.catalog,
-  });
-}
-
-export function useModelsInstalledQuery() {
-  return useQuery({
-    queryKey: qk.models.installed,
-    queryFn: () => api<GetInstalledResponse>('/models/installed'),
-  });
-}
-
-export function useModelsStorageQuery() {
-  return useQuery({
-    queryKey: qk.models.storage,
-    queryFn: () => api<GetStorageResponse>('/models/storage'),
-  });
-}
+export {
+  useModelsCatalogQuery,
+  useModelsInstalledQuery,
+  useModelsStorageQuery,
+} from '../../lib/api/models';
 
 export function useModelsSourcesQuery() {
   return useQuery({

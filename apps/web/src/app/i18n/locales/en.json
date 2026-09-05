@@ -189,9 +189,7 @@
       "verifyingChip": "Verifying",
       "retry": "Retry",
       "cancel": "Cancel",
-      "progressLabel": "{{name}} download progress",
-      "etaUnderMinute": "less than 1 minute left",
-      "etaMinutes": "about {{minutes}} min left"
+      "progressLabel": "{{name}} download progress"
     },
     "quant": {
       "current": "Quant {{quant}}",

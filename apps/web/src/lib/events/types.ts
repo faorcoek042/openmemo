@@ -46,23 +46,25 @@ export function isSequenced(type: string): boolean {
 
 /* ═════════════════════ 扩展事件（shared 尚未覆盖，见 §缺口）═════════════════════ */
 
-/**
- * ★ F3 两阶段转写的覆盖结果。
+/*
+ * ★★ 这里原来还有两个：`x.transcribe.replaced` 与 `x.media.asset.ready`。
  *
- * **shared 目前没有这个事件**，但没有它，D-05 §4.3 的
- * 「已更新 47 段 · 你编辑过的 3 段已保留 · [撤销]」就写不出来 ——
- * 而这句话正是让用户不觉得"软件在乱改我的字"的关键（ADR-007 认定的产品成败点）。
- * 已上报，等 shared 补齐后删除本地定义。
+ * **它们在 `packages/shared` 里早就转正了**（`transcribe.replaced` / `media.asset.ready`，
+ * 见 `SSE_EVENT_TYPES`），而本地这两条 `x.` 定义连同 `notesSse` 里的两个 `bus.on`
+ * 一起活了下来 —— 于是订阅端等的是 `x.media.asset.ready`，
+ * 而 daemon（`media/peaksAsset.ts`）与 mock 源（`lib/api/mock.ts`）发的都是
+ * `media.asset.ready`。**两个字符串，永远碰不上。**
+ *
+ * 用户看得见的后果就是波形：转写完成时 daemon 已经把 peaks 算好并广播了，
+ * 而详情页那条 invalidate 永远不触发，**波形要手动刷新才出来**。
+ * 更贵的是它把生产端也骗了：`peaksAsset.ts` 的注释写着「前端 notesSse 也早就订阅着」，
+ * 那句话在写下的那一刻就是假的（它订的是另一个名字），
+ * 于是那条线被当成"已经接通"，没人再回来查。
+ *
+ * ⚠️ 这就是 `x.` 前缀这个约定自带的成本：它是**临时**的，而临时的东西没有到期日。
+ * 现在由 `sseNaming.test.ts` 那条守卫钉住 ——
+ * **shared 里已经有的事件，不许再有一份 `x.` 影子**，否则当场红。
  */
-export interface XTranscribeReplacedEvent {
-  type: 'x.transcribe.replaced';
-  noteUid: string;
-  oldTranscriptUid: string;
-  newTranscriptUid: string;
-  updatedSegments: number;
-  preservedEditedSegments: number;
-  canUndo: boolean;
-}
 
 /** 摘要流式生成（shared 有 mindmap.delta，但没有 summary 的对应物）。 */
 export interface XSummaryDeltaEvent {
@@ -76,21 +78,6 @@ export interface XSummaryDoneEvent {
   type: 'x.summary.done';
   noteUid: string;
   chars: number;
-}
-
-/**
- * 单个媒体产物就绪。
- *
- * shared 的 `media.ready` 是**整体**就绪（含 duration/title），但波形 `peaks`
- * 与转码是**逐个异步生成**的；F5 的时间轴需要知道"peaks 这一个好了没有"，
- * 否则只能轮询或干等。已上报。
- */
-export interface XMediaAssetReadyEvent {
-  type: 'x.media.asset.ready';
-  noteUid: string;
-  assetUid: string;
-  role: string;
-  bytes: number;
 }
 
 /** daemon 优雅退出（D-01 §2.5）。 */
@@ -143,24 +130,22 @@ export interface XSyncRequiredEvent {
   reason: 'replay_gap' | 'reconnected' | 'leader_reconnected';
 }
 
+/**
+ * ⚠️ **进这张表 = 声称"服务端会发这个类型"**（它逐条喂给 `addEventListener`）。
+ * 所以只许放 shared **确实没有**的那几个；shared 里已经有的，直接订阅 shared 那个名字。
+ * `sseNaming.test.ts` 会把"影子"当场判红。
+ */
 export const EXTENSION_SSE_EVENT_TYPES = [
-  'x.transcribe.replaced',
   'x.summary.delta',
   'x.summary.done',
-  'x.media.asset.ready',
   'x.daemon.shutdown',
   'x.index.progress',
 ] as const;
 
 export type ExtensionSseEvent =
-  | XTranscribeReplacedEvent
-  | XSummaryDeltaEvent
-  | XSummaryDoneEvent
-  | XMediaAssetReadyEvent
-  | XDaemonShutdownEvent
-  | XIndexProgressEvent;
+  XSummaryDeltaEvent | XSummaryDoneEvent | XDaemonShutdownEvent | XIndexProgressEvent;
 
-/** 前端要监听的全集 = shared 的 29 个 + 本地扩展的 6 个。 */
+/** 前端要监听的全集 = shared 的 30 个 + 本地扩展的 4 个。 */
 export const ALL_SSE_EVENT_TYPES: readonly string[] = [
   ...SHARED_SSE_EVENT_TYPES,
   ...EXTENSION_SSE_EVENT_TYPES,

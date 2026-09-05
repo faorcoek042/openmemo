@@ -20,7 +20,8 @@ import { Button } from './Button';
 import { ProgressMeter } from './ProgressMeter';
 import { StatusChip } from './StatusChip';
 import { useProgressStore } from '../../lib/stores/progress.store';
-import { formatBytes, formatSpeed } from '../../lib/format/bytes';
+import { formatBytes, formatPercent, formatSpeed } from '../../lib/format/bytes';
+import { approxEta } from '../../lib/format/time';
 import { stepLabel } from '../../lib/format/stepLabel';
 import { pickLocalized } from '../../lib/format/localized';
 import { jobDisplayName } from '../../lib/format/jobName';
@@ -48,16 +49,21 @@ import { useJobCatalogNames } from '../../lib/catalog/useJobCatalogNames';
  * **不是「排队中」**（那是在断言一件假事：进度倒退回起点），
  * **也不是原始英文 key**（把机器枚举值摆给用户看）。
  */
-/** ETA 文案：D-05 §4.1 规则 4 —— 只在有依据时显示，且四舍五入到"约 X 分钟"。
- *  不显示"剩余 03:47"这种假精确：实测速率波动很大。 */
-function formatEta(
-  t: (k: string, o?: Record<string, unknown>) => string,
-  sec: number | null,
-): string | null {
-  if (sec == null || !Number.isFinite(sec) || sec <= 0) return null;
-  if (sec < 60) return t('models.download.etaUnderMinute');
-  return t('models.download.etaMinutes', { minutes: Math.round(sec / 60) });
-}
+/*
+ * ★ 这里原本还有一个本地的 `formatEta()` —— **同一件事的第三份实现，而且它漏了小时档。**
+ *
+ * 正版是 `lib/format/time.ts` 的 `approxEta()`（D-05 §4.1 规则 4：只在有依据时显示、
+ * 四舍五入到"约 X 分钟"，不显示"剩余 03:47"那种假精确）。另外两个渲染点
+ * （`JobToaster.tsx` 与 `features/tasks/JobList.tsx`）用的一直是它。
+ *
+ * 分叉的后果和上面那张 `STEP_KEY` 表**完全同型**，而且更容易被看见：本地这份只有
+ * 「<60 秒」和「X 分钟」两档，于是一个 3 小时的下载在模型页显示
+ * **「剩余约 180 分钟」**，而同一个 job 的 toast 显示**「约 3 小时」** ——
+ * 同一时刻、同一条任务、两句对不上的话。
+ *
+ * 收敛回 `approxEta` 之后，`models.download.etaUnderMinute` / `etaMinutes` 两个词条
+ * 也随之退场（它们是这份实现私有的；正版的措辞在 `approxEta` 里）。
+ */
 
 export interface DownloadRowProps {
   job: DownloadJob;
@@ -128,7 +134,7 @@ export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps
   const step = live?.step ?? job.step;
   const state = live?.state ?? job.state;
   const speed = live?.speedBps ?? job.speedBps;
-  const eta = formatEta(t, live?.etaSeconds ?? job.etaSeconds);
+  const eta = approxEta(live?.etaSeconds ?? job.etaSeconds, locale);
   const ratio = total ? Math.min(1, (completed ?? 0) / total) : 0;
 
   const isVerifying = step === 'verifying';
@@ -212,7 +218,15 @@ export function DownloadRow({ job, locale, onCancel, onRetry }: DownloadRowProps
       <div className="mt-1.5 flex items-center justify-between text-xs text-ink-secondary">
         <span className="tabular-nums">
           {formatBytes(completed ?? 0, locale)} / {formatBytes(total ?? 0, locale)}
-          {total ? ` · ${Math.round(ratio * 100)}%` : ''}
+          {/*
+            ★ 这里原来是 `Math.round(ratio * 100)%` —— 手写百分比，丢了 `formatPercent()`
+            的三样东西：本地化的百分号（`Intl` 的 `style:'percent'`）、量纲检查
+            （`reportProgressDimensionViolation`，#90 那个「恒 100%」就是它抓的）、
+            以及非有限值退化成 `'—'` 而不是渲染出 `NaN%`。
+            同一个文件已经从同一个模块 import 了 `formatBytes`/`formatSpeed`，
+            **只有百分比这一格是自己算的** —— 一份实现里的第二份实现。
+          */}
+          {total ? ` · ${formatPercent(ratio, locale)}` : ''}
         </span>
         <span className="tabular-nums">
           {speed ? formatSpeed(speed, locale) : ''}

@@ -1,7 +1,12 @@
 import { useTranslation } from 'react-i18next';
 import { FlaskConical, PlugZap } from 'lucide-react';
 
-import { isSurfaceMocked, useSurfaceStore, type Surface } from '../../lib/api/surfaces';
+import {
+  isSurfaceMocked,
+  useSurfaceStore,
+  type Surface,
+  type SurfaceState,
+} from '../../lib/api/surfaces';
 import { cn } from '../../lib/utils';
 
 /**
@@ -77,13 +82,38 @@ export function MockNotice({
  * 只在**存在**模拟面时出现 —— 全部接通后它自己消失，不需要谁去删代码。
  */
 export function ConnectivitySummary({ className }: { className?: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const states = useSurfaceStore((s) => s.states);
   const health = useSurfaceStore((s) => s.health);
 
   const entries = Object.entries(states) as [Surface, string][];
-  const live = entries.filter(([, v]) => v === 'live').length;
-  const mocked = entries.filter(([, v]) => isSurfaceMocked(v as never)).length;
+  /*
+   * ★ **`'generic'` 不是一个"面"，不许进这两个数。**
+   *
+   * `lib/api/surfaces.ts` 对它的定义写得很清楚：「未声明 surface 的调用落点。
+   * **不计入"已接通/模拟"统计**，只用于回落逻辑」。而这里原本是
+   * `Object.entries(states)` 直接数，**漏了 `s !== 'generic'` 这一条** ——
+   * 于是任何一次裸 `api('/…')` 调用（今天仍有二十来处）把 `generic` 标成 live 或 mock，
+   * 顶栏那句「已接通 N / 模拟 M」就多算一个，**最多差 1**。
+   *
+   * 一个"关于系统状态的仪表盘自己报错数"，比没有仪表盘更坏：
+   * 它教人不再相信这一格，而这一格恰恰是用来判断"哪块是真的"的。
+   *
+   * ⚠️ **这里仍然是第二份实现，只是它现在被钉住了。**
+   * `surfaces.ts` 里的 `liveSurfaces()` / `mockedSurfaces()` 各自带着这条过滤，
+   * 本该直接调用它们。没有那么做的理由是外部的、而且是临时的：那两个导出今天登记在
+   * `scripts/orphan-exports-baseline.json` 的零引用豁免名单里，一旦被产品代码接上，
+   * `check:orphans` 会要求同步删掉那两行 —— 而那个文件本轮归另一路处置
+   * （正在被整体删除），我不能同时改它。
+   *
+   * 所以先用测试兜住：`src/test/components.test.tsx` 的「ConnectivitySummary」那一族里
+   * 有两条腿，正反两面钉住"generic 不进这两个数"。
+   * **等那份基线落定，这里应当直接换成调用那两个函数** —— 这是一笔明写的欠账，
+   * 不是一个已经收工的设计。
+   */
+  const counted = entries.filter(([s]) => s !== 'generic');
+  const live = counted.filter(([, v]) => v === 'live').length;
+  const mocked = counted.filter(([, v]) => isSurfaceMocked(v as SurfaceState)).length;
 
   /*
    * ★ 版本戳**不能**跟着"还有假数据"这个条件一起消失。
@@ -109,7 +139,7 @@ export function ConnectivitySummary({ className }: { className?: string }) {
         ? {
             title: t('app.versionStampTitle', {
               version: versionLabel(t, health.version),
-              at: hms(health.build.startedAt),
+              at: hms(health.build.startedAt, i18n.language),
             }),
           }
         : {})}
@@ -138,7 +168,22 @@ export function ConnectivitySummary({ className }: { className?: string }) {
   );
 }
 
-const hms = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour12: false });
+/**
+ * 「启动于 12:35:01」里的那个钟点。
+ *
+ * ⚠️ **`locale` 是必填的，不许再退回 `undefined`。**
+ * 这里原本是 `toLocaleTimeString(undefined, …)` —— `undefined` 的含义是
+ * **浏览器的语言**，不是应用的语言。而应用的语言是用户在引导第一步自己选的
+ * （`app/i18n` 的 `i18n.language`，会写进 localStorage）。
+ * 于是一台系统语言是英文、应用里选了中文的机器上，整页中文里这一格按 en-US 排版 ——
+ * 全仓另外 12 处绝对时间戳（`ModelsPage` / `HardwareCard` / `DiagnosticsPage` …）
+ * 用的都是 `i18n.language` / `locale`，**只有这里是例外**。
+ *
+ * 「例外」在这类事情上从来不是小事：它不会报错、不会崩，只会让人偶尔觉得
+ * "这个界面有点不对劲"，然后谁也说不出哪里不对。
+ */
+const hms = (iso: string, locale: string) =>
+  new Date(iso).toLocaleTimeString(locale, { hour12: false });
 
 /**
  * 角落里这一格显示什么 —— **只剩两个信号，另外两个搬去了诊断页。**

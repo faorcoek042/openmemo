@@ -10,22 +10,30 @@
  *
  * 解法不是开豁免，而是**把"读目录"这件事降到 `lib/`** ——
  * 它只依赖 `app/query` 的 key 与 `lib/api/client`，两者 `components/` 与 `features/`
- * 都可以依赖。**先例已经有一个**：`components/common/AsrModelPicker.tsx:81-91`
- * 就是这样自己持有一条 `qk.models.installed` 查询的。
+ * 都可以依赖。
  *
- * ⚠️ **query key 与 `features/models` 用的是同一个 `qk.models.catalog` 前缀**，
- * 所以两边共享 react-query 的缓存与失效（`features/models/sse.ts`、
- * `features/runtime/sse.ts` 里的 invalidate 会同时刷到这里）。
- * 这里**不带 `lang` 参数**，与 `ModelDetailPage.tsx:32` 一致 ——
- * 两份名字本来就都在响应里，语言是**读的时候**才决定的（这正是本轮修的那件事），
+ * ## ★ 订正：降到 `lib/` 是对的，**在这里又抄一份 `useQuery` 是错的**
+ *
+ * 这个文件此前自己写了一条 `useQuery`：`queryKey` 与 `useModelsCatalogQuery('all')`
+ * **逐字相同**（`[...qk.models.catalog, 'all', '']`）、URL 也相同
+ * （`/models/catalog?role=all`），只有 `staleTime` 一个写字面量 `60_000`、
+ * 一个写 `STALE_TIME_OVERRIDES.catalog`（今天恰好也是 60_000）。
+ *
+ * 同一个 key 上挂着两份 `queryFn`，**react-query 只执行先挂载的那一个** ——
+ * 于是"这次请求实际长什么样"取决于组件挂载顺序。今天两份等价所以没有症状，
+ * 而没有症状正是这一族债最难被清掉的原因。
+ * （有症状的那个版本是 `qk.models.installed` 的三份，见 `lib/api/models.ts` 文件头。）
+ *
+ * 现在**查询本体在 `lib/api/models.ts`（唯一一份）**，这里只负责"从目录里查名字"。
+ * 上面那句"先例已经有一个：`AsrModelPicker` 自己持有一条 `qk.models.installed` 查询"
+ * 也一并作废 —— 那正是被这次收敛清掉的东西，别再照着它抄。
+ *
+ * ⚠️ 这里**不带 `lang` 参数**，与 `ModelDetailPage.tsx:32` 一致 ——
+ * 两份名字本来就都在响应里，语言是**读的时候**才决定的，
  * 不该再让它进 cache key、把同一份数据劈成两份。
  */
 
-import { useQuery } from '@tanstack/react-query';
-import type { GetCatalogResponse } from '@openmemo/shared';
-
-import { qk } from '../../app/query';
-import { api } from '../api/client';
+import { useModelsCatalogQuery } from '../api/models';
 import type { CatalogLookup, LocalizableEntry } from '../format/jobName';
 
 /**
@@ -35,12 +43,7 @@ import type { CatalogLookup, LocalizableEntry } from '../format/jobName';
  * 首帧必然处在这个状态，调用方（`jobDisplayName`）会因此走 daemon 兜底名。
  */
 export function useModelCatalogNames(): CatalogLookup {
-  const { data } = useQuery({
-    queryKey: [...qk.models.catalog, 'all', ''] as const,
-    queryFn: () => api<GetCatalogResponse>('/models/catalog?role=all'),
-    // 目录带 ETag 缓存（app/query.ts 的约定），这里只是读名字，放宽一点没关系
-    staleTime: 60_000,
-  });
+  const { data } = useModelsCatalogQuery('all');
 
   return (targetId: string): LocalizableEntry | null => {
     const groups = data?.groups;

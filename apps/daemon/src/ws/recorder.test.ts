@@ -392,9 +392,14 @@ describe('F3 录音落盘 —— 走真 WebSocket 的 harness', () => {
     );
 
     /*
-     * `media.asset.ready` 契约里早就有、前端 `notesSse` 也早就订阅着，
-     * 但**在这之前一次都没有被发布过**（没有异步产物）。
+     * `media.asset.ready` 契约里早就有，但**在这之前一次都没有被发布过**（没有异步产物）。
      * 少了它，用户得手动刷新才看得到波形。
+     *
+     * ⚠️ 这段话原来还写着「前端 `notesSse` 也早就订阅着」——**那是假的**：
+     * 前端订的是 `x.media.asset.ready`，差一个前缀。也就是说这条断言绿着的那段时间里，
+     * 它证明的只是"daemon 发出去了"，**不是"界面收得到"**。
+     * 订阅端已订正（`apps/web/src/features/notes/sse.ts`）。
+     * 一条只覆盖半程的断言，最危险的地方不是它测得少，是它的**措辞**让人以为全程都测了。
      */
     assert.equal(
       r.events.includes('media.asset.ready'),

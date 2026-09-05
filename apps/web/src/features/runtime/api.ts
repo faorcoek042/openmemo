@@ -5,7 +5,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   Backend,
-  GetBackendCatalogResponse,
   GetBreakerResponse,
   GetHardwareResponse,
   GetInstalledBackendsResponse,
@@ -15,7 +14,7 @@ import type {
 import { breakerTripped } from '@openmemo/shared';
 
 import { api } from '../../lib/api/client';
-import { qk, STALE_TIME_OVERRIDES } from '../../app/query';
+import { qk } from '../../app/query';
 
 /**
  * 硬件探测结果。
@@ -54,7 +53,7 @@ export { useHardwareQuery } from '../../lib/api/hardware';
 export function useBreakerQuery() {
   return useQuery({
     queryKey: qk.runtime.breaker,
-    queryFn: () => api<GetBreakerResponse>('/runtime/breaker'),
+    queryFn: () => api<GetBreakerResponse>('runtime', '/runtime/breaker'),
     refetchInterval: (q) => {
       const d = q.state.data;
       if (d === undefined) return false;
@@ -96,7 +95,7 @@ export function useBreakerQuery() {
 export function useBreakerResetMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api<GetHardwareResponse>('/runtime/hardware?reset=1'),
+    mutationFn: () => api<GetHardwareResponse>('runtime', '/runtime/hardware?reset=1'),
     onSuccess: () => {
       // 立刻去拿 `recovering: true` —— 那才是界面要显示的东西
       void qc.invalidateQueries({ queryKey: qk.runtime.breaker });
@@ -120,20 +119,20 @@ export function useBreakerResetMutation() {
 export function useHardwareRefresh() {
   const qc = useQueryClient();
   return async (): Promise<void> => {
-    const fresh = await api<GetHardwareResponse>('/runtime/hardware?refresh=1');
+    const fresh = await api<GetHardwareResponse>('runtime', '/runtime/hardware?refresh=1');
     qc.setQueryData(qk.runtime.hardware, fresh);
     // 后端可用性变了 ⇒ 所有 fit 判定失效（与 useBackendSelectMutation 同一条理由）
     void qc.invalidateQueries({ queryKey: qk.models.catalog });
   };
 }
 
-export function useBackendsCatalogQuery() {
-  return useQuery({
-    queryKey: qk.backends.catalog,
-    queryFn: () => api<GetBackendCatalogResponse>('/backends/catalog'),
-    staleTime: STALE_TIME_OVERRIDES.catalog,
-  });
-}
+/*
+ * ★ 实现在 `lib/api/backends.ts`（唯一一份），这里只再导出 —— 与上面
+ *   `useHardwareQuery` 同一个做法。`lib/catalog/useJobCatalogNames.ts` 此前
+ *   为同一个 key、同一个端点另写了一份（分层护栏让它没法 import 这里），
+ *   两份只在 `staleTime` 的写法上不同、今天恰好等值。理由写在那个文件的头部。
+ */
+export { useBackendsCatalogQuery } from '../../lib/api/backends';
 
 export function useBackendsInstalledQuery() {
   return useQuery({

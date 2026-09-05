@@ -87,6 +87,8 @@ function zhAt(key: string): string {
 import { StatusChip } from '../components/common/StatusChip';
 import { ProgressMeter } from '../components/common/ProgressMeter';
 import { DownloadRow } from '../components/common/DownloadRow';
+import { approxEta } from '../lib/format/time';
+import { formatPercent } from '../lib/format/bytes';
 import type { MergedJob } from '../features/tasks/api';
 import { arr } from '../lib/safe';
 import { ApiError, api, setCsrf, clearCsrf, hasCsrf } from '../lib/api/client';
@@ -4731,6 +4733,61 @@ describe('T-129 同族：显示条件不许被别人的条件包住', () => {
       const r = await render(<ConnectivitySummary />);
       await r.flush();
       assert.equal(text(r.container), '', '连不上 daemon 时这一格应当整块不出现');
+      r.unmount();
+    });
+  });
+
+  /*
+   * ★★ `'generic'` **不是一个面**，不许进「已接通 N / 模拟 M」这两个数。
+   *
+   * `lib/api/surfaces.ts` 对它的定义就是「未声明 surface 的调用落点，
+   * **不计入"已接通/模拟"统计**」，而 `surfaces.ts` 里的两个正版函数
+   * `liveSurfaces()` / `mockedSurfaces()` 各自带着 `s !== 'generic'` 这条过滤。
+   * 顶栏那一格此前是自己内联数了一遍 `Object.entries(states)`，**漏了这条过滤** ——
+   * 于是任何一次裸 `api('/…')` 调用（今天仍有二十来处）把 `generic` 标成 live 或 mock，
+   * 这两个数就多算一个。
+   *
+   * ⚠️ 判据**用正版函数当基准**，不钉某个具体数字：
+   * 数字会随 `SURFACES` 增删而变，而"两边口径必须一致"这条性质不会变。
+   * 钉数字的断言在下次加一个面时会红，而那是**假红灯**。
+   */
+  test('★★ 只有 generic 是 mock 时，顶栏不许说"有假数据"', async () => {
+    await withSurfaces({ ...allLive, generic: 'mock' }, HEALTH, async () => {
+      const r = await render(<ConnectivitySummary />);
+      await r.flush();
+      const shown = text(r.container);
+      assert.ok(
+        !shown.includes('模拟'),
+        `generic 被算进了"模拟"那一格 —— 它是回落落点，不是一个 API 面（实际渲染："${shown}"）`,
+      );
+      assert.ok(shown.includes('v9.9.9'), `版本戳丢了："${shown}"`);
+      r.unmount();
+    });
+  });
+
+  test('★★ generic 是 live 时也不许把「已接通」多算一个', async () => {
+    /*
+     * 反向那一半：上一条只钉住了"模拟"那个数。`generic` 更常见的取值其实是 `live`
+     * （任何一次成功的裸 `api('/…')` 都会把它标成 live），所以这一格同样要钉。
+     *
+     * ⚠️ 期望值**从 `SURFACES` 现算**，不写死数字：
+     * 加一个新面时写死的那个数会变成假红灯，而"generic 不算数"这条性质不会变。
+     * 这里 13 个真实的面里 notes 是 mock ⇒ 已接通应当是 `SURFACES.length - 2`；
+     * 把 generic 算进去就会变成 `SURFACES.length - 1`，所以后者必须**不出现**。
+     */
+    await withSurfaces({ ...allLive, generic: 'live', notes: 'mock' }, HEALTH, async () => {
+      const r = await render(<ConnectivitySummary />);
+      await r.flush();
+      const shown = text(r.container);
+      const want = SURFACES.length - 2;
+      assert.ok(
+        new RegExp(`\\b${want}\\b`).test(shown),
+        `「已接通」应当是 ${want}（13 个真实的面里 notes 是 mock）：「${shown}」`,
+      );
+      assert.ok(
+        !new RegExp(`\\b${want + 1}\\b`).test(shown),
+        `「已接通」多算了一个 —— generic 又被算进去了：「${shown}」`,
+      );
       r.unmount();
     });
   });
@@ -11919,6 +11976,100 @@ describe('T-199 ② DownloadRow 的影子守卫', () => {
     const r = await renderRow({ state: 'queued' });
     const t = text(r.container);
     assert.equal(/·\s*45%/.test(t), true, `queued 时误伤了合法的"内存领先"（实际：${t}）`);
+    r.unmount();
+  });
+
+  /*
+   * ★★ **同一个 job，在哪个页面上都得说同一句话。**
+   *
+   * 这一行此前自己写了一份 ETA 文案（本地 `formatEta()`），只有「<60 秒」和
+   * 「X 分钟」两档 —— **漏了小时档**。于是一个 3 小时的下载：
+   *   · 模型页这一行说「剩余约 180 分钟」
+   *   · 同一个 job 的 toast（`JobToaster`，走 `approxEta`）说「约 3 小时」
+   * 两句都不算错，但摆在同一个产品里就是自相矛盾，而且没有任何一处会报错。
+   *
+   * ⚠️ 判据**拿正版函数当基准**，不钉某一句措辞：
+   * `approxEta()` 的文案随时可能被润色，而"这一行必须与正版一字不差"这条性质不会变。
+   * 钉措辞的断言会在下一次润色时变成假红灯，并且**惩罚好文案**。
+   */
+  /*
+   * ⚠️ ETA 必须写进**内存快照**，不能只改服务端行：`running` 状态下影子守卫是
+   * 放行的，`live?.etaSeconds ?? job.etaSeconds` 里胜出的是快照那一份 ——
+   * 只改 `serverJob` 的话这几条会一直在测那个写死的 120 秒，**测了个寂寞**。
+   */
+  const renderWithEta = async (etaSeconds: number) => {
+    stubApi({});
+    useProgressStore.setState({
+      byJob: {
+        [JOB_ID]: {
+          jobId: JOB_ID,
+          jobType: 'download.model',
+          state: 'running',
+          progress: 0.45,
+          step: 'downloading',
+          completedBytes: 45 * MB,
+          totalBytes: 100 * MB,
+          speedBps: 3.2 * MB,
+          etaSeconds,
+          at: Date.now(),
+        },
+      },
+    });
+    const r = await render(
+      <DownloadRow
+        job={serverJob({ state: 'running' }) as unknown as Parameters<typeof DownloadRow>[0]['job']}
+        locale="zh-CN"
+        onCancel={() => {}}
+        onRetry={() => {}}
+      />,
+    );
+    await r.flush();
+    return r;
+  };
+
+  for (const [etaSeconds, why] of [
+    [3 * 3600, '小时档 —— 这一档正是被漏掉的那个'],
+    [90 * 60, '一个半小时（会被四舍五入成「约 2 小时」）'],
+    [5 * 60, '分钟档 —— 反面：别为了修小时档把分钟档改坏'],
+    [40, '不到一分钟'],
+  ] as [number, string][]) {
+    test(`★★ ETA 与 approxEta() 逐字一致：${why}`, async () => {
+      const r = await renderWithEta(etaSeconds);
+      const shown = text(r.container);
+      const want = approxEta(etaSeconds, 'zh-CN')!;
+      assert.equal(
+        shown.includes(want),
+        true,
+        `这一行没说「${want}」——它多半又自己写了一份 ETA（实际渲染：${shown}）`,
+      );
+      r.unmount();
+    });
+  }
+
+  test('★ 反面：3 小时不许再被渲染成「180 分钟」（缺陷当时的原样）', async () => {
+    const r = await renderWithEta(3 * 3600);
+    const shown = text(r.container);
+    assert.equal(/180/.test(shown), false, `小时档又漏了，退回按分钟报（实际渲染：${shown}）`);
+    r.unmount();
+  });
+
+  /*
+   * ★ 百分比必须走 `formatPercent()`。
+   *
+   * 手写的 `Math.round(ratio*100)%` 在 `ratio` 非有限时会渲染出 `NaN%`；
+   * 正版对"说不出来"的表达是 `'—'`（`formatBytes`/`formatSpeed` 一贯如此）。
+   * 这里用 `totalBytes` 有值、`completedBytes` 为 null 之外的路径拿不到 NaN，
+   * 所以直接钉正版的输出形状：**屏幕上出现的那个百分比，必须是 `formatPercent` 给的那个**。
+   */
+  test('★ 百分比逐字等于 formatPercent()（而不是手写的 Math.round）', async () => {
+    const r = await renderRow({ state: 'running' });
+    const shown = text(r.container);
+    // 陈旧快照在 running 下是生效的：45 MB / 100 MB
+    assert.equal(
+      shown.includes(formatPercent(0.45, 'zh-CN')),
+      true,
+      `百分比不是 formatPercent 给的那个（实际渲染：${shown}）`,
+    );
     r.unmount();
   });
 });

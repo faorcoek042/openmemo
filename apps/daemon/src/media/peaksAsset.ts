@@ -79,9 +79,20 @@ export async function generatePeaksAsset(
     });
 
     /*
-     * `media.asset.ready` —— 契约里早就有它，前端 `notesSse` 也早就订阅着并会
-     * invalidate 详情查询。**在这之前它一次都没被发布过**（因为没有异步产物）。
-     * 少了这一条，用户得手动刷新才看得到波形：转写完成时波形还没算出来。
+     * `media.asset.ready` —— 契约里早就有它。**在这之前它一次都没被发布过**
+     * （因为没有异步产物）。少了这一条，用户得手动刷新才看得到波形：
+     * 转写完成时波形还没算出来。
+     *
+     * ── ⚠️ 订正：这段话原来还有半句「前端 `notesSse` 也早就订阅着」，那是假的 ──
+     *
+     * 前端订的是 **`x.media.asset.ready`**（`lib/events/types.ts` 的本地扩展），
+     * 与这里发的 `media.asset.ready` **差一个前缀，永远碰不上**。
+     * 也就是说：这个生产者接上线的那天，它自称修好的那个 bug（"要手动刷新才有波形"）
+     * **一直还活着**，而两边的注释都在替对方作证。
+     * 订阅端已改成 shared 的正版名字（`features/notes/sse.ts`），并加了守卫
+     * （web 侧 `sseNaming.test.ts`：shared 里已有的事件不许再有一份 `x.` 影子）。
+     *
+     * **别把"我发了"读成"有人收得到"** —— 那正是这一条踩过的坑。
      */
     deps.sse.publish(
       makeEvent('media.asset.ready', topics.note(p.noteUid), {

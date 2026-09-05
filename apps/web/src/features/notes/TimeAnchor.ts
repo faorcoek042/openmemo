@@ -1,5 +1,7 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 
+import { timecode } from '../../lib/format/time';
+
 /**
  * M-7「引用此刻」时间锚点 —— TipTap 自定义 inline node。
  *
@@ -26,15 +28,20 @@ export interface TimeAnchorAttrs {
   quote: string | null;
 }
 
-function formatTimecode(ms: number): string {
-  const t = Number.isFinite(ms) ? Math.max(0, Math.floor(ms)) : 0;
-  const total = Math.floor(t / 1000);
-  const s = total % 60;
-  const m = Math.floor(total / 60) % 60;
-  const h = Math.floor(total / 3600);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-}
+/*
+ * ★ 这里原本有一个逐字重写的 `formatTimecode()` —— `lib/format/time.ts` 的
+ *   `timecode()` 的第二份实现（两者对所有输入等价：非有限/负数都归 0，只是
+ *   一个先 `Math.max(0, Math.floor(ms))`、一个先把 `ms` 归零，然后同样地整除 1000）。
+ *
+ * ⚠️ **这一份漂了的话，坏掉的是搜索，而且是静默的。**
+ * 下面 `renderText()` 产出的 `[12:34]` **就是被写进 `body_text`、被 FTS5 索引的那个字符串**，
+ * 而 `renderHTML()` 画在屏幕上的是另一次调用。两份实现一旦对不齐（哪怕只是补零规则），
+ * 用户看到的时间码和索引里的时间码就不是同一个东西：
+ * **他照着屏幕上的字搜，搜不到自己刚写的那条锚点，而没有任何一处报错。**
+ *
+ * 收敛之后 `padStart(2` 在 `apps/web/src` 里只剩 `lib/format/` 那一处 ——
+ * 这条性质由 `lib/format/singleSource.test.ts` 钉着。
+ */
 
 export const TimeAnchor = Node.create({
   name: 'timeAnchor',
@@ -68,7 +75,7 @@ export const TimeAnchor = Node.create({
         role: 'button',
         tabindex: '0',
       }),
-      formatTimecode(ms),
+      timecode(ms),
     ];
   },
 
@@ -78,7 +85,7 @@ export const TimeAnchor = Node.create({
    * 用户搜"12:34"搜不到，而他明明在正文里看到了。
    */
   renderText({ node }) {
-    return `[${formatTimecode(Number(node.attrs.startMs ?? 0))}]`;
+    return `[${timecode(Number(node.attrs.startMs ?? 0))}]`;
   },
 });
 
