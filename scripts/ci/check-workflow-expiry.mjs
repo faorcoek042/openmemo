@@ -66,6 +66,7 @@
  *   · `kind: 'pending'` —— 停在这里不是终态。**必须给 `expiresAt` + `forks`**。
  */
 import { readFile, readdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
@@ -126,12 +127,20 @@ export const DARK_WORKFLOWS = [
       '建 release 是要人确认的对外动作，本 workflow 只开"上传"这一格；' +
       '两个必填输入（已发布的 tag、产出 artifact 的 run id）都没有默认值，**结构上就无法被自动触发**。',
   },
-  {
-    file: 'tool-discovery-timing.yml',
-    kind: 'deliberate',
-    evidence: 'tool-discovery-timing.yml:19-22',
-    why: '不设阈值、不会把 CI 弄红；一次性的事实问题（`discoverTools()` 在三平台上多贵），与 probe-cold-timing 同类。',
-  },
+  /*
+   * ── 🗑️ `tool-discovery-timing.yml` 曾经在这里，#85 **连同脚本一起删除** ────────
+   *
+   * 消融审计的结论：它是**仪表，不是守卫** —— 脚本里一个 `process.exit(1)` 都没有，
+   * 任何缺陷状态下它都绿。而 `[gh run list 实测]` 它**全历史只跑过 1 次**
+   * （2026-08-10），要回答的那个一次性事实问题早就有答案了。
+   *
+   * 判据不是"它没用"，是**"抽掉它，没有任何一条判据失去主语"** ——
+   * 没有任何东西读它的输出，也没有任何门禁依赖它。这是本轮 92 个脚本里
+   * 唯一一个满足这个条件的。留着它的成本不是 CPU，是**它长得像一道守卫**。
+   *
+   * ⚠️ `probe-cold-timing.yml` 看起来同类，**但不删** —— 见下面 INSTRUMENTS 那段：
+   *   它同一个 workflow 里还挂着 `probe-warmup-verify.mjs`，那个是真守卫。
+   */
 
   /* ───────────── 以下是 `pending`：停在这里**不算一个终态** ───────────── */
 
@@ -217,6 +226,56 @@ export const DARK_WORKFLOWS = [
   },
 ];
 
+/**
+ * ★ **仪表登记册（#85）：这些脚本永远 exit 0 —— 它们不是门禁。**
+ *
+ * ## 为什么要有这一份
+ *
+ * 消融审计数出来：`scripts/ci/` 里有几个脚本**在任何缺陷状态下都绿**
+ * （唯一的 `process.exit(1)` 是"脚本自身出错"，不是"产品出错"）。
+ * 它们各自的文件头都写了这件事，`platform-facts.mjs` 甚至在最后一行写着
+ * 「永远 exit 0：这是仪表，不是门禁」。
+ *
+ * **问题不在它们身上，在读的人身上**：它们跑在 CI 里、名字长得像检查、
+ * 每晚在 Actions 页面上留下一行绿 —— 而"绿"在这个仓库是做决定时读的那一行。
+ * 一个**看起来像守卫的仪表**比一个诚实的仪表危险：它会让人以为某件事被验过了。
+ *
+ * 所以把「它永远绿」变成**一件登记在册的事**，而不是一件要读文件头才知道的事。
+ * 这里不判红绿（它们本来就不判），只保证**这份名单指得到真东西**，并且每轮打出来。
+ *
+ * ## ⚠️ 一个必须写死的陷阱
+ *
+ * `probe-cold-timing.yml` 里跑两个脚本，**只有一个是仪表**：
+ *   · `probe-cold-timing.mjs`   —— 仪表，永远 exit 0；
+ *   · `probe-warmup-verify.mjs` —— **真守卫**：捂热成功而随后默认超时那一发仍失败
+ *     ⇒ exit 1（一条**产品声明**被证伪）。
+ *
+ * 谁要是照着"这个 workflow 里都是仪表"去删，会顺手拆掉一条真守卫。
+ * 这句话写在这里，是因为本轮消融**差一点**就那么干了。
+ */
+export const INSTRUMENTS = [
+  {
+    script: 'scripts/ci/platform-facts.mjs',
+    workflow: 'ci-crossplatform.yml',
+    why: '在真 runner 上把 T-141 §3 那批 `[未验证：需真机]` 前提打成事实，判定留给读日志的人。',
+    note: '当初那批问题已在 docs/design/D-11 结题（11 条有真机证据 / 2 条被证伪 / 1 条结构上验不了）。留着它是当底稿，不是当门禁。',
+  },
+  {
+    script: 'scripts/ci/probe-cpu-features.mjs',
+    workflow: 'ci-crossplatform.yml',
+    why: '把产品自己的 CPU 探测跑一遍，结果原样打出来。',
+    note: '零个 process.exit —— 它连"脚本自己出错"都不判。',
+  },
+  {
+    script: 'scripts/ci/probe-cold-timing.mjs',
+    workflow: 'probe-cold-timing.yml',
+    why: '量 darwin-arm64 上探针第一次 Metal 初始化多慢；顺序就是这个 workflow 的全部内容。',
+    note:
+      '⚠️ 同一个 workflow 里的 `probe-warmup-verify.mjs` **不是仪表**，它证伪一条产品声明时会 exit 1。' +
+      '删这个仪表**不许**连同那个 workflow 一起删。',
+  },
+];
+
 /** `0.N.P` → 可比较的三元组。格式由 `VERSION_RE` 保证，这里只做拆分。 */
 function parseVersion(v) {
   if (!VERSION_RE.test(v)) throw new Error(`版本号 ${JSON.stringify(v)} 不符合 0.N.P`);
@@ -254,7 +313,12 @@ async function collectDark(wfDir = WF_DIR) {
  * 而那一格**一旦被兑现（挂上 cron）就不再是暗的**，自检当场跟着坏 ——
  * 一条会被"把事情做对"弄坏的自检，等于在惩罚做对。所以样本改用 /tmp 里的夹具。
  */
-export async function audit({ version, registry = DARK_WORKFLOWS, wfDir = WF_DIR } = {}) {
+export async function audit({
+  version,
+  registry = DARK_WORKFLOWS,
+  wfDir = WF_DIR,
+  instruments = INSTRUMENTS,
+} = {}) {
   const problems = [];
   const { files, dark } = await collectDark(wfDir);
 
@@ -345,6 +409,25 @@ export async function audit({ version, registry = DARK_WORKFLOWS, wfDir = WF_DIR
     );
   }
 
+  /*
+   * ⑤ ★ 仪表登记册必须**指得到真东西**。
+   *
+   * 这一条不判"它该不该是仪表"（那是人的判断），只判**这份名单没有烂掉**：
+   * 一条指向不存在脚本的登记，和"这个仪表已经删了但没人知道"长得一模一样，
+   * 而那正是本轮删 `tool-discovery-timing` 时顺手要堵上的口子。
+   */
+  for (const i of instruments) {
+    if (!existsSync(join(REPO_ROOT, i.script))) {
+      problems.push(
+        `INSTRUMENTS 里的 ${i.script} 不存在了 —— 删掉这条登记（或者它被改名了）。\n` +
+          `    一份指不到东西的"仪表清单"会让人以为某个永远绿的脚本还在被登记着。`,
+      );
+    }
+    if (!i.why || !i.workflow) {
+      problems.push(`INSTRUMENTS 里的 ${i.script} 缺 why / workflow —— 说不出用途的仪表就是噪音`);
+    }
+  }
+
   return { problems, dark, files, expired };
 }
 
@@ -372,6 +455,19 @@ async function main() {
     for (const p of problems) console.error(`  ✘ ${p}\n`);
     process.exit(1);
   }
+  /*
+   * ★ 每轮都打，**绿的时候也打**。
+   *   一个仪表安静下来，就和一道守卫长得一模一样了 —— 而它永远不会红。
+   */
+  console.log('');
+  console.log(`── 仪表（不是门禁，永远 exit 0）：${INSTRUMENTS.length} 个 ──`);
+  for (const i of INSTRUMENTS) {
+    console.log(`   · ${i.script}  [${i.workflow}]`);
+    console.log(`     ${i.why}`);
+    if (i.note) console.log(`     ${i.note}`);
+  }
+  console.log('   ⚠️ 它们跑绿**不代表任何东西被验过** —— 判定留给读日志的人。');
+
   const pend = DARK_WORKFLOWS.filter((e) => e.kind === 'pending').length;
   console.log(
     `\n✔ check-workflow-expiry: ${dark.length} 条只能手动触发的 workflow 全部登记在册` +

@@ -97,6 +97,7 @@ export const STEP_LABELS = {
   test_ratchet: 'Test-file ratchet',
   locale_ratchet: 'Locale key guard',
   contract_fields: 'Contract-field readers',
+  dependency_audit: 'Dependency-source audit',
   ci_scripts_selftest: 'CI scripts self-test',
   test: 'Test',
   mutation_anchors: 'Mutation-spec anchors',

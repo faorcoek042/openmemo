@@ -47,9 +47,9 @@
  * 有一环红时**后面的环仍然被执行**（拿一条故意在中间红的假链跑）、
  * 以及"一条都没解析出来"必须红（空转防线）。
  */
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
-import { join, dirname } from 'node:path';
+import { basename, join, dirname } from 'node:path';
 import { SKIP_EXIT_CODE } from './platform-scope.mjs';
 import { fileURLToPath } from 'node:url';
 
@@ -82,6 +82,94 @@ export function parseLink(link) {
   const [, bin, script, rest] = m;
   const args = rest.trim() ? rest.trim().split(/\s+/) : [];
   return { bin, script, args, label: `${bin} ${script}${rest}`.trim() };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════
+ * T-163 的判据本体：**`scripts/ci/selftest-*` 全集必须 ⊆ `test:ci-scripts`**
+ * ══════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 扫描地板。**这是防「扫描器悄悄什么都不匹配了」的那道保险。**
+ *
+ * 一个 glob 打错一个字 ⇒ 扫出 0 个 ⇒ `[].every()` 恒真 ⇒ 这道门从此永远绿，
+ * 而它失效的样子和「全都接上了」一模一样。取 20（今天 29 个），只防塌方：
+ * 真要成批删自检是一次显式决定，撞上这条地板时红的那句话会把两种读法都端出来。
+ */
+export const SELFTEST_FLOOR = 20;
+
+/** 读 `scripts/ci/` 下所有 `selftest-*.mjs` / `selftest-*.sh` 的**文件名**。 */
+export async function listSelftestFiles(dir = join(REPO_ROOT, 'scripts', 'ci')) {
+  return (await readdir(dir))
+    .filter((f) => f.startsWith('selftest-') && (f.endsWith('.mjs') || f.endsWith('.sh')))
+    .sort();
+}
+
+/**
+ * T-163：**一条没接进 `test:ci-scripts` 的自检等于不存在。**
+ *
+ * ## 为什么从「手写 7 条」改成「扫描全集」（#85）
+ *
+ * 上一版是一份**手抄的名单**，钉住 7 个自检。审计当天数出来的实况是：
+ * 磁盘上 **29** 个 `selftest-*`，链上 29 个，而这道门只看得见其中 **7** 个。
+ * ⇒ **另外 22 个里的任何一个被从链里摘掉，`ci.yml` 一声不吭。**
+ *
+ * 唯一的兜底是本文件的 `MIN_LINKS = 25`（今天 38 环 ⇒ 要删满 13 环才响），
+ * 而它**只在 `ci-crossplatform.yml` 夜跑上跑，不在推送门禁上**。
+ * 也就是说：摘掉一个自检、当天合进 master，没有任何一盏灯会亮。
+ *
+ * 这正是这道门自己要防的那件事，发生在它自己身上 —— 一份手抄名单与它要
+ * 覆盖的集合**各自演化**，而漂掉的那一半失效时看起来和从没有过一模一样。
+ * （同一形状的第三次：`check-orphan-exports` 按裸名匹配 #83、
+ *   `selftest-launcher-path` 的 LEGS 手写 4/8。）
+ *
+ * ## ⚠️ 刻意**没有**豁免名单
+ *
+ * 一份「这几个可以不接链」的例外表，第二天就会变成新的手抄名单。
+ * 真有一个自检不该进链，就让它在这里红一次 —— 那一次红逼出的是一个**显式决定**
+ * （要么接上，要么连同文件一起删掉），而不是一行悄悄加进例外表的名字。
+ *
+ * ## ⚠️ 判据是「解析出来的那一环的脚本名」，不是 `chain.includes(名字)`
+ *
+ * 子串匹配会被**参数**满足：`node scripts/ci/x.mjs --baseline selftest-bundle.mjs`
+ * 里 `selftest-bundle.mjs` 出现了，但它根本不会被执行。老实现用的就是
+ * `cmd.includes(f)`。这里改用已经被反向验证过的 `parseLink()` 取每一环真正的脚本。
+ *
+ * @param {{chain: string, selftestFiles: string[], floor?: number}} o
+ * @returns {{ok: boolean, problems: string[], scanned: number, missing: string[]}}
+ */
+export function auditSelftestCoverage({ chain, selftestFiles, floor = SELFTEST_FLOOR } = {}) {
+  const problems = [];
+  const files = [...(selftestFiles ?? [])].sort();
+
+  if (files.length < floor) {
+    problems.push(
+      `scripts/ci/ 里只扫到 ${files.length} 个 \`selftest-*\`（地板 ${floor}）——\n` +
+        `      要么**扫描器坏了**（那样这道门会从此永远绿，比没有门更坏），\n` +
+        `      要么真的成批删了自检（那是一次显式决定，请连同这条地板一起改）。\n` +
+        `      两种都得有人当场看一眼，所以这里不比对、直接红。`,
+    );
+    return { ok: false, problems, scanned: files.length, missing: [] };
+  }
+
+  const inChain = new Set();
+  for (const link of splitChain(chain)) {
+    const parsed = parseLink(link);
+    if (parsed) inChain.add(basename(parsed.script));
+  }
+
+  const missing = files.filter((f) => !inChain.has(f));
+  if (missing.length > 0) {
+    problems.push(
+      `package.json: test:ci-scripts 里没有这 ${missing.length} 个自检 —— ` +
+        `**没被跑到的自检等于不存在**：\n` +
+        missing.map((f) => `        scripts/ci/${f}`).join('\n') +
+        `\n      （扫到 ${files.length} 个 selftest-*，链上认出 ${inChain.size} 个脚本。）\n` +
+        `      要么把它接进链，要么连同文件一起删掉 —— 不许留着一个不会跑的自检，` +
+        `那比没有它更坏：它看起来像一份证明。`,
+    );
+  }
+
+  return { ok: problems.length === 0, problems, scanned: files.length, missing };
 }
 
 /** 单环上限。一个挂住的自检不许把整台 runner 的时间吃光。 */

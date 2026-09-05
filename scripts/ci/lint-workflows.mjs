@@ -37,6 +37,13 @@ import { fileURLToPath } from 'node:url';
 
 import { parse } from 'yaml';
 
+/*
+ * ⚠️ `run-selftests-all.mjs` 的 `main()` 挂在
+ * `fileURLToPath(import.meta.url) === process.argv[1]` 后面，import 它不会跑任何东西。
+ * 它 import 的 `platform-scope.mjs` 也是纯模块（只有 `narrowTo()` 被调用时才退出）。
+ */
+import { auditSelftestCoverage, listSelftestFiles } from './run-selftests-all.mjs';
+
 const REPO_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const WF_DIR = join(REPO_ROOT, '.github', 'workflows');
 
@@ -100,6 +107,14 @@ const MUST_FAIL_LOUDLY = {
 
 const problems = [];
 let checks = 0;
+/**
+ * 绿的时候也要打出来的那几行：**一道扫描型判据扫到了多少个主语**。
+ *
+ * 一个只在红的时候才说话的扫描器，坏掉之后（扫到 0 个）看起来和「全都合格」
+ * 一模一样。把主语数印在每一轮的输出里，是让它坏掉时有人看得见的最便宜的办法。
+ * （同一处置见 `check-usefulness.mjs`：绿的时候也打覆盖面。）
+ */
+const checksNote = [];
 /**
  * 有多少个 job **解除了默认的 `success()`** 却带着 `needs:`（见下面那条 #102 断言）。
  * 用来防"空集判通过"：这条规则今天有主语（`e2e-runtime` 的 attest），
@@ -580,19 +595,32 @@ for (const file of files.sort()) {
     );
   }
 
-  /* T-163：新守卫必须真的被跑到。一条没接进 test:ci-scripts 的自检等于不存在。 */
+  /*
+   * T-163：新守卫必须真的被跑到。一条没接进 test:ci-scripts 的自检等于不存在。
+   *
+   * ## #85：这里原来是一份**手抄 7 条**的名单，而磁盘上有 29 个自检
+   *
+   * 也就是说这道门自己就是它要防的那个形状：**另外 22 个里的任何一个被摘掉，
+   * `ci.yml` 一声不吭**（唯一兜底 `run-selftests-all.mjs` 的 `MIN_LINKS=25` 要
+   * 删满 13 环才响，而且只在夜跑的 `ci-crossplatform.yml` 上）。
+   *
+   * 判据本体挪进了 `run-selftests-all.mjs::auditSelftestCoverage()` —— **不是为了
+   * 分文件好看，是因为它在这里根本没法被反向验证**：本文件全程顶层执行 + 结尾
+   * `process.exit()`，`import` 不进来，于是「摘掉一个自检它会不会红」这件事
+   * 从来没有被喂过输入。`selftest-workflow-expiry.mjs` 的 C 组现在逐条钉着它，
+   * 其中一条正面要求**老实现（手抄 7 条 + `includes()`）对同一份夹具不红**。
+   *
+   * 下面留下的两条是**不叫 `selftest-*` 的**，扫描覆盖不到，所以仍然手写：
+   */
   {
     const pkg = JSON.parse(await readFile(join(REPO_ROOT, 'package.json'), 'utf8'));
     const cmd = String(pkg.scripts?.['test:ci-scripts'] ?? '');
+
+    const cov = auditSelftestCoverage({ chain: cmd, selftestFiles: await listSelftestFiles() });
+    must(cov.ok, cov.problems.join('\n'));
+    checksNote.push(`T-163：扫到 ${cov.scanned} 个 selftest-*，全部在 test:ci-scripts 上`);
+
     for (const f of [
-      'selftest-elf-glibc.mjs',
-      'selftest-macho-minos.mjs',
-      'selftest-buildbox.sh',
-      'selftest-build-whisper.sh',
-      // T-22 预编译包：`verify-bundle.sh` 是出厂检查，只在打包流水线上跑一次，
-      // 而它写错的方式基本都是**少检查几条然后报绿**（C5 那一族）。
-      // 它的自检被摘掉时，失效的样子和"本来就没有"一模一样 —— 所以钉在这里。
-      'selftest-bundle.mjs',
       // D-12：版本号单一事实来源。被"顺手简化"掉时会当场红，而不是等用户发现
       // 界面上那个数字又几个月没动过了。
       'check-version-sync.mjs',
@@ -601,16 +629,10 @@ for (const file of files.sort()) {
        *   有截止版本」。它自己被摘掉时的样子，恰恰就是它要防的那件事 ——
        *   一条判据写在没人读的地方，然后三次发版都没看见它。
        *   `[实测]` proxy-coverage 的过期判据写在 YAML 注释里，滑过了 0.7.2/0.7.3/0.7.4。
+       *   ⚠️ 它不叫 `selftest-*`（`selftest-workflow-expiry.mjs` 才是它的自检，
+       *      那一个已由上面的扫描覆盖），所以这条手写的必须留着。
        */
       'check-workflow-expiry.mjs',
-      'selftest-workflow-expiry.mjs',
-      /*
-       * ★ 跨平台棘轮的反向验证。它自己被摘掉时的样子，正是它要防的那件事：
-       *   棘轮还在跑、还在报绿，而"基线陈了也要红"那一半已经没人验了。
-       *   `[实测]` 那一半是整条棘轮不烂掉的关键 —— 只有"新伤要红"的棘轮
-       *   会安静地烂几个月，并且看起来一直在工作。
-       */
-      'selftest-xplat-ratchet.mjs',
     ]) {
       must(
         cmd.includes(f),
@@ -1036,6 +1058,8 @@ must(
     '要么是有人把 #102 的修法退回去了（e2e-runtime 的 attest 应该是它的主语），' +
     '要么这条规则确实没主语了、该连同这句一起删。两种都得有人当场看见。',
 );
+
+for (const n of checksNote) console.log(`   ⓘ ${n}`);
 
 if (problems.length > 0) {
   console.log(`✘ lint-workflows: ${problems.length} 个问题（共 ${checks} 条断言）`);
