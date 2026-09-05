@@ -53,6 +53,7 @@
     "src/features/runtime/packAvailability.test.ts",
     "src/features/runtime/packStatus.ts",
     "src/lib/safe.ts",
+    "src/lib/wording.ts",
     "src/lib/remediation/routes.test.ts",
     "src/lib/remediation/routes.ts",
     "src/lib/api/notesCache.test.ts",

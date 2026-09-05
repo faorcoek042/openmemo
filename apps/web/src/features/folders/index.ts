@@ -5,10 +5,7 @@ export {
   useCreateFolderMutation,
   useRenameFolderMutation,
   useDeleteFolderMutation,
-  useMoveNoteMutation,
-  buildTree,
   flattenFolders,
-  normalizeFolders,
   type FolderDto,
   type FolderNode,
 } from './api';

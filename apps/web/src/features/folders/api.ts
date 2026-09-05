@@ -47,7 +47,7 @@ export function useFoldersQuery() {
  * 容忍两种形状：已建好的树（daemon 实际返回）与扁平列表（早期设计）。
  * 两者都不是时返回空数组 —— **宁可侧栏空着，也不让它整个崩掉**。
  */
-export function normalizeFolders(d: unknown): FolderNode[] {
+function normalizeFolders(d: unknown): FolderNode[] {
   if (Array.isArray(d)) return withDepth(d as FolderNode[], 0);
   if (d && typeof d === 'object' && Array.isArray((d as { folders?: unknown }).folders)) {
     return buildTree((d as { folders: FolderDto[] }).folders);
@@ -97,7 +97,7 @@ export function flattenFolders(tree: readonly FolderNode[] | undefined): FolderN
  * D-02 §1.3 要求写入时做环检测，但前端不能假设服务端一定做对了 ——
  * 一个坏数据不该让整个侧栏白屏。
  */
-export function buildTree(flat: readonly FolderDto[]): FolderNode[] {
+function buildTree(flat: readonly FolderDto[]): FolderNode[] {
   const byUid = new Map<string, FolderNode>();
   for (const f of flat) byUid.set(f.uid, { ...f, children: [], depth: 0 });
 
@@ -161,34 +161,21 @@ export function useDeleteFolderMutation() {
   });
 }
 
-/**
- * 把笔记移到某个文件夹（`null` = 移出到未分类）。
+/*
+ * ★ 这里原来还有一个 `useMoveNoteMutation()`。**已删 —— 它是一次搬家的残留，不是死码。**
  *
- * ⚠️ **端点是 `PUT /api/notes/:uid/folder`，不是 `PATCH /api/notes/:uid`**（T-155 订正）。
+ * 权威那一份现在是 `features/notes/api.ts` 的 `useMoveNoteToFolderMutation()`，
+ * 两份实现**逐字相同**（同端点 `PUT /api/notes/:uid/folder`、同 body、同三条 invalidate）。
  *
- * 这里原来发的是后者。它不会报错 —— `rest/content.ts` 的 PATCH 处理器只认
- * `title` / `bodyJson` / `bodyText` / `summaryMd` / `language` / `anchors`，
- * **`folderUid` 连读都不读**，然后照样回 `200 {ok:true}`。
- * 也就是说这个 hook 一旦有人接上，用户点"移动到某文件夹"会看到成功、笔记原地不动。
+ * 为什么会有两份：`NoteActionsMenu` 要用它，而 eslint 的分层护栏当场拦住了
+ * `import … from '../folders/api'`（features/A ↮ features/B）。**护栏拦得对** ——
+ * 归属上也是 notes 那一侧更正：端点是「给这条笔记换个归属」，不是「对文件夹做什么」。
+ * 于是那一侧照着写了一份，而这一份没人跟着删。
  *
- * 它能错这么久是因为它**零调用方**（与 `useDeleteNoteMutation` / `useRenameNoteMutation`
- * 同一批，见 `features/notes/NoteActionsMenu.tsx` 的文件头）——
- * 一条没人走的路上的坑，不会有人掉进去，也就不会有人发现。
- * 真实端点见 `apps/daemon/src/http/rest/organize.ts:419`（`PUT /api/notes/:uid/folder`，
- * body `{folderUid}`，目标文件夹不存在时回 400 `FOLDER_NOT_FOUND`）。
+ * ⚠️ 它留下来的真实代价**不是多几行**，是**守卫钉错了对象**：
+ * `test/components.test.tsx` 那条「移动笔记打的是 PUT 而不是 PATCH」原本 import 的是
+ * **这一份**（零调用方的那份），而用户真正会走的 `useMoveNoteToFolderMutation`
+ * 一条腿都没有。同一轮已把那条腿改钉到权威那份上。
+ * 端点本身的坑（PATCH 处理器不读 `folderUid` 却照回 200）记在 notes 那一侧的注释里，
+ * 没有丢。
  */
-export function useMoveNoteMutation() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (v: { noteUid: string; folderUid: string | null }) =>
-      api<{ uid: string; folderUid: string | null }>('notes', `/notes/${v.noteUid}/folder`, {
-        method: 'PUT',
-        body: { folderUid: v.folderUid },
-      }),
-    onSuccess: (_d, v) => {
-      void qc.invalidateQueries({ queryKey: qk.notes.detail(v.noteUid) });
-      void qc.invalidateQueries({ queryKey: qk.notes.all });
-      void qc.invalidateQueries({ queryKey: qk.folders });
-    },
-  });
-}

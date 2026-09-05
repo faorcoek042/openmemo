@@ -354,6 +354,11 @@ export function useSaveNoteBodyMutation(noteUid: string) {
  * 归属上也是这一侧更正：端点是 **`PUT /api/notes/:uid/folder`**，
  * 它是"给这条笔记换个归属"，不是"对文件夹做什么"。
  * 共享的只有 `qk` 与 `api`（都在 lib/app 里），依赖方向仍然是 features → lib。
+ *
+ * ★ **后续**：`features/folders/api.ts` 那份 `useMoveNoteMutation`（与下面这份逐字相同、
+ * 零调用方）已删。它留着的时候有一个具体代价：`test/components.test.tsx` 那条
+ * 「移动笔记打的是 PUT 而不是 PATCH」钉的是**那一份**，于是用户真正会走的这一份
+ * 一条腿都没有 —— 一条全程绿灯、却在给没人跑的代码作证的守卫。那条腿已改钉这一份。
  */
 
 /** 供「移动到文件夹」挑选用的文件夹列表。`enabled` 让调用方按需拉。 */

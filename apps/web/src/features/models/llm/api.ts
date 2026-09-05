@@ -153,7 +153,7 @@ export const LLM_ACTIVE_KEY = 'llm.defaultProviderId';
 export const LLM_DEFAULT_MODEL_KEY = 'llm.defaultModelId';
 
 /** 每个 provider 一条 baseUrl，daemon 按 `llm.baseUrl.<providerId>` 取。 */
-export function baseUrlKeyFor(providerId: string): string {
+function baseUrlKeyFor(providerId: string): string {
   return `llm.baseUrl.${providerId}`;
 }
 

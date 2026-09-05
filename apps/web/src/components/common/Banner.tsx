@@ -4,19 +4,26 @@ import { cn } from '../../lib/utils';
 /**
  * 持久条幅（D-05 §5.1 的第 4 个层级）。
  *
- * 用途仅限**全局降级态**：SSE 断开、磁盘将满、后端自检失败、端口漂移、MOCK 模式。
+ * 用途仅限**全局降级态**：SSE 断开、磁盘将满、后端自检失败、端口漂移。
  * 特点：**可折叠但不可关闭** —— 问题还在就不该消失。
  * （能被关掉的问题提示等于没提示；用户关掉后就再也不知道自己处在降级状态。）
+ *
+ * ## ★ 这里原来还有第四档 `tone: 'mock'`。**已删（连同用途清单里的「MOCK 模式」）。**
+ *
+ * 它的样式注释写着「MOCK 用最刺眼的处理：绝不能让人误以为是真数据」——
+ * 而 `tone="mock"` 在全仓**一次都没有被渲染过**，也就是说那句话描述的是一个
+ * 从不存在的外观。它不是被忘了接上，是被**一个明确的设计决定取代**了：
+ * `components/common/MockNotice.tsx` 的文件头论证过为什么"这块是假数据"必须
+ * **按 API 面**而不是全局条幅（全局只有全真/全假两态，表达不了"笔记真了、转写还假着"
+ * 这个真实中间态）。留着这一档，等于让那份论证的结论在类型上仍然可以被推翻。
  */
 
-export type BannerTone = 'info' | 'warning' | 'critical' | 'mock';
+export type BannerTone = 'info' | 'warning' | 'critical';
 
 const TONE_STYLES: Record<BannerTone, string> = {
   info: 'border-l-accent bg-surface-1',
   warning: 'border-l-warning bg-surface-1',
   critical: 'border-l-critical bg-surface-1',
-  // MOCK 用最刺眼的处理：绝不能让人误以为是真数据
-  mock: 'border-l-serious bg-surface-1',
 };
 
 export interface BannerProps {

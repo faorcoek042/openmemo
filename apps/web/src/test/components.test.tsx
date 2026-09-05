@@ -38,7 +38,7 @@ const NEWER = (version: string, repo = 'yt-dlp/yt-dlp'): UpstreamCheck => ({
 
 import { TagEditor } from '../features/notes/TagEditor';
 import { NoteActionsMenu } from '../features/notes/NoteActionsMenu';
-import { useMoveNoteMutation } from '../features/folders/api';
+import { useMoveNoteToFolderMutation } from '../features/notes/api';
 import { SearchBox } from '../features/search/SearchBox';
 import SearchPage from '../features/search/SearchPage';
 import { JobList } from '../features/tasks/JobList';
@@ -9426,18 +9426,25 @@ describe('T-155 笔记的删除 / 重命名入口', () => {
   });
 
   /**
-   * ★ 这条钉的是 `useMoveNoteMutation` 的端点。
+   * ★ 这条钉的是 `useMoveNoteToFolderMutation` 的端点。
    *
    * 它原来发 `PATCH /api/notes/:uid {folderUid}` —— 而 `rest/content.ts` 的 PATCH
    * 处理器**根本不读 `folderUid`**（只认 title/bodyJson/bodyText/summaryMd/language/anchors），
    * 然后照样回 200 `{ok:true}`。真实端点是 `PUT /api/notes/:uid/folder`
    * （`rest/organize.ts:419`）。**用一个最小组件把 hook 真的调一次**，
    * 而不是去 grep 源码里的字符串 —— 后者钉的是形式。
+   *
+   * ⚠️ **订正：这条腿原来钉的是另一份实现。**
+   * 它 import 的是 `features/folders/api` 的 `useMoveNoteMutation` —— 与这里这份
+   * **逐字相同、但零调用方**的一份拷贝（分层护栏拦住了 `NoteActionsMenu` 去 import 它，
+   * 于是 notes 那一侧照着又写了一份）。也就是说：**用户真正会走的那条路一条腿都没有，
+   * 而这条腿一直在给一份没人跑的代码作证。** 那份拷贝已删，本腿改钉权威那份。
+   * 这是「守卫钉错了对象」那一族 —— 它全程是绿的，绿得毫无意义。
    */
   test('★ 移动笔记打的是 PUT /notes/:uid/folder，不是 PATCH /notes/:uid', async () => {
     const { calls } = stubApi({ 'PUT /notes/n1/folder': { uid: 'n1', folderUid: 'f1' } });
     function Probe() {
-      const move = useMoveNoteMutation();
+      const move = useMoveNoteToFolderMutation();
       return (
         <button type="button" onClick={() => move.mutate({ noteUid: 'n1', folderUid: 'f1' })}>
           移动

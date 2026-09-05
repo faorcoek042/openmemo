@@ -76,9 +76,15 @@ export interface ListRowProps {
    * 一次纯粹的锚点漂移伪装成行为回归，而这恰恰是本仓刚花了一整轮追过的形状。
    */
   linkTestId?: string;
-  'data-testid'?: string;
-  className?: string;
 }
+
+/*
+ * ★ 这个接口原来还有 `className?` 与 `'data-testid'?` 两格（后者由 `...rest` 摊到卡片上）。
+ * **已删 —— 三个调用点一个都没传过。**
+ * `data-testid` 那格尤其误导：`linkTestId` 是真在用的那个锚点（每处保留自己的原名，
+ * 见上面那段），旁边再摆一个从没被用过的同类入口，只会让下一个要加锚点的人
+ * 在两个入口之间猜一个。
+ */
 
 /** 卡片外框 —— 三处唯一的一份。 */
 const CARD = 'rounded-lg border border-line bg-surface-1 p-3 transition-colors';
@@ -92,8 +98,6 @@ export function ListRow({
   trailing,
   meta,
   children,
-  className,
-  ...rest
 }: ListRowProps): ReactNode {
   const head = (
     <div className="flex items-start gap-3">
@@ -129,7 +133,7 @@ export function ListRow({
   // 没有落点：整行都不是链接。**不给假出口**（T-192）。
   if (href === null) {
     return (
-      <li className={cn(CARD, className)} {...rest}>
+      <li className={CARD}>
         {head}
         {children}
       </li>
@@ -138,7 +142,7 @@ export function ListRow({
 
   if (clickTarget === 'row') {
     return (
-      <li className={className} {...rest}>
+      <li>
         <Link to={href} className={cn(CARD, 'block hover:bg-fill-hover')} data-testid={linkTestId}>
           {head}
           {children}
@@ -148,7 +152,7 @@ export function ListRow({
   }
 
   return (
-    <li className={cn(CARD, className)} {...rest}>
+    <li className={CARD}>
       {head}
       {children}
     </li>

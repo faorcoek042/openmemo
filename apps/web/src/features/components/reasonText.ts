@@ -38,6 +38,7 @@ import type {
 } from '@openmemo/shared';
 
 import { approxEta } from '../../lib/format/time';
+import { unreachable, type Translate } from '../../lib/wording';
 
 /** 「说不出已装的是哪一版」的每一种原因该说哪句话。**总表**。 */
 export const INSTALLED_VERSION_UNKNOWN_KEYS: Readonly<
@@ -85,9 +86,6 @@ export const UPSTREAM_FAILURE_KEYS: Readonly<Record<UpstreamFailure['kind'], str
   unsupported_upstream_kind: 'components.reason.failed.unsupportedUpstreamKind',
   upstream_error_text: 'components.reason.failed.upstreamErrorText',
 };
-
-/** `t()` 的最小形状 —— 这个模块不引 React，方便直接对它写用例。 */
-type Translate = (key: string, params?: Record<string, unknown>) => string;
 
 /**
  * 「哪个配额桶、每小时多少次」那一段。**两格都可能没有**（上游不一定给这两个头），
@@ -142,22 +140,23 @@ export function upstreamFailureText(t: Translate, locale: string, f: UpstreamFai
       return t(key, { upstreamKind: f.upstreamKind });
     case 'upstream_error_text':
       return t(key, { text: f.text });
+    /*
+     * 兜底取空串（{@link unreachable} 的第二个参数）：外层那句话照样成立，
+     * 只是括号里没有细节。让整张组件页崩掉是更坏的结果。
+     *
+     * ⚠️ **订正：这里原先写着「上面那张总表保证了这一行在编译得过的代码里不可达」。**
+     * 那半句只对编译期成立，却被当成了一条总的保证。运行期这一行**是可达的** ——
+     * 本模块没有 `normalize*`，`f` 是原样从响应里拿来的，而
+     * 「新档位静默渲染成一段空白」正是本文件抬头明令禁止的那件事。
+     * 对照 `features/recorder/recorderErrorText.ts`：那个模块的同一行敢说
+     * "运行期同样不可达"，**只因为**它有 `normalizeRecorderError` 按白名单收口。
+     *
+     * 本轮没修（补第二条腿要逐档论证兜底值，是一次独立改动）。
+     * 这一族的全貌记在 `lib/wording.ts` 抬头。
+     */
     default:
-      return assertNeverUpstreamFailure(f);
+      return unreachable(f, '');
   }
-}
-
-/**
- * 编译期穷尽性检查；**运行期不 throw**。
- *
- * 抄 `assertNeverInstalledArm` 那一条：少写一条腿时 `tsc` 当场红（那是我们要的），
- * 但真跑到这一行（产品与 daemon 版本错配）时，让整张组件页崩掉是更坏的结果。
- * 返回空串 ⇒ 外层那句英文照样成立，只是括号里没有细节 —— 而**上面那张总表
- * 保证了这一行在编译得过的代码里不可达**。
- */
-function assertNeverUpstreamFailure(x: never): string {
-  void x;
-  return '';
 }
 
 /** 一条 `UpstreamIndeterminate` → 用户读得懂的那句话。 */
@@ -174,12 +173,8 @@ export function indeterminateText(t: Translate, r: UpstreamIndeterminate): strin
         families: r.newestPerFamily.join(' / '),
         pinnedVersion: r.pinnedVersion,
       });
+    // 同上一处：空串兜底，且同样只有编译期那一条腿。
     default:
-      return assertNeverIndeterminate(r);
+      return unreachable(r, '');
   }
-}
-
-function assertNeverIndeterminate(x: never): string {
-  void x;
-  return '';
 }

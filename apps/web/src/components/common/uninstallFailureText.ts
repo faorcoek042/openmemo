@@ -29,8 +29,7 @@
 
 import type { FailedFileReport, RemovalFailureKind } from '@openmemo/shared';
 
-/** `t()` 的最小形状 —— 这个模块不引 React，方便直接对它写用例。 */
-type Translate = (key: string, params?: Record<string, unknown>) => string;
+import { isKnownKind, type Translate } from '../../lib/wording';
 
 /**
  * 一条「删不动」的每一种成因该说哪句话。**总表，三格一个都不许少。**
@@ -39,7 +38,7 @@ type Translate = (key: string, params?: Record<string, unknown>) => string;
  * 而「在哪儿」这个问题在整条链上只有 `path` 答得出来（`fs.rm` 抛的那串
  * 不保证带完整路径，所以契约里单列了一格）。
  */
-export const REMOVAL_FAILURE_KEYS: Readonly<Record<RemovalFailureKind, string>> = {
+const REMOVAL_FAILURE_KEYS: Readonly<Record<RemovalFailureKind, string>> = {
   in_use: 'uninstall.removalFailure.in_use',
   permission_denied: 'uninstall.removalFailure.permission_denied',
   unknown: 'uninstall.removalFailure.unknown',
@@ -59,12 +58,10 @@ export const REMOVAL_FAILURE_KEYS: Readonly<Record<RemovalFailureKind, string>> 
  * 「没删掉、它在这儿、原因我们没弄清」—— 对一个我们真的不认识的 kind 来说，
  * **那句话是准确的**，而丢掉这一条会让用户回到"界面一个字都不说"。
  */
-export function removalFailureKindOf(raw: unknown): RemovalFailureKind {
-  // `hasOwnProperty.call` 而不是 `in`：`'toString' in KEYS` 是真的。
-  if (typeof raw === 'string' && Object.prototype.hasOwnProperty.call(REMOVAL_FAILURE_KEYS, raw)) {
-    return raw as RemovalFailureKind;
-  }
-  return 'unknown';
+function removalFailureKindOf(raw: unknown): RemovalFailureKind {
+  // `isKnownKind` 判的是总表**自有**的键（不是 `in`：`'toString' in KEYS` 是真的），
+  // 判完顺带把 `raw` 收窄成 `RemovalFailureKind`，不用再写一次 `as`。
+  return isKnownKind(REMOVAL_FAILURE_KEYS, raw) ? raw : 'unknown';
 }
 
 /**

@@ -14,6 +14,8 @@
 
 import type { SemanticUnavailableReason } from '@openmemo/shared';
 
+import { isKnownKind } from '../../lib/wording';
+
 export type SearchMode = 'keyword' | 'semantic' | 'hybrid';
 
 /**
@@ -94,11 +96,11 @@ export interface SearchModes {
 function semanticReasonOf(raw: unknown): SemanticUnavailableReason | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const kind: unknown = (raw as { kind?: unknown }).kind;
-  if (typeof kind !== 'string') return null;
-  // `hasOwnProperty.call` 而不是 `in`：`'toString' in KEYS` 是真的。
-  if (!Object.prototype.hasOwnProperty.call(SEMANTIC_UNAVAILABLE_KEYS, kind)) return null;
+  // `isKnownKind` 判的是总表**自有**的键（不是 `in`：`'toString' in KEYS` 是真的），
+  // 判完顺带把 `kind` 收窄，不用再写一次 `as`。
+  if (!isKnownKind(SEMANTIC_UNAVAILABLE_KEYS, kind)) return null;
   // 只留 `kind`：线上多带的字段一律不进前端状态。
-  return { kind: kind as SemanticUnavailableReason['kind'] };
+  return { kind };
 }
 
 /** 展示顺序。**不是"有哪几档"** —— 那个只有服务端知道。 */

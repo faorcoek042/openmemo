@@ -32,6 +32,14 @@
  *
  * ⚠️ 新代码一律用 `emit`。见到 `emitFromWire` 出现在第三个地方，那多半是有人
  * 拿它绕过类型检查 —— 那正是这次要堵的那个洞又被挖开了。
+ *
+ * ## ★ 这里原来还有一个 `onAny(fn)`（订阅全部事件）。**已删。**
+ *
+ * 它的注释写着「调试面板 / 连接看门狗用」—— **两个都不用它**：全仓没有调试面板，
+ * 而连接看门狗在 `lib/events/source.ts` 里读的是自己维护的 `lastFrameAt`。
+ * 一句点名了两个消费方、而两个都不存在的注释，比没有注释更贵：
+ * 下一个人会以为这里有一条在用的旁路，改 `deliver()` 时得替它考虑。
+ * 真要加调试面板时，`anyHandlers` 那个 Set 加回来是几行的事。
  */
 
 import type { EventMap } from './types';
@@ -39,7 +47,6 @@ import type { EventMap } from './types';
 type Handler<T> = (payload: T) => void;
 
 const handlers = new Map<string, Set<Handler<never>>>();
-const anyHandlers = new Set<(type: string, payload: unknown) => void>();
 
 /** `emit` 与 `emitFromWire` 的共同实现 —— 两者只在**类型**上不同，运行时完全一致。 */
 function deliver(type: string, payload: unknown): void {
@@ -54,13 +61,6 @@ function deliver(type: string, payload: unknown): void {
       }
     }
   }
-  for (const fn of anyHandlers) {
-    try {
-      fn(type, payload);
-    } catch (err) {
-      console.error('[sse] wildcard handler threw', err);
-    }
-  }
 }
 
 export const bus = {
@@ -73,14 +73,6 @@ export const bus = {
     set.add(fn as Handler<never>);
     return () => {
       set!.delete(fn as Handler<never>);
-    };
-  },
-
-  /** 订阅全部事件（调试面板 / 连接看门狗用）。 */
-  onAny(fn: (type: string, payload: unknown) => void): () => void {
-    anyHandlers.add(fn);
-    return () => {
-      anyHandlers.delete(fn);
     };
   },
 
@@ -107,6 +99,5 @@ export const bus = {
   /** 仅供测试与热更新使用。 */
   _reset(): void {
     handlers.clear();
-    anyHandlers.clear();
   },
 };

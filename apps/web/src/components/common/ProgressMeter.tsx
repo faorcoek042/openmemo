@@ -27,15 +27,27 @@ const EPSILON = 1e-9;
  * 现在轨道跟着 tone 走（`--status-*-tint`），填充用 ink 档，明暗两档全部 ≥ 4.5:1。
  */
 
-/** `accent` 是既有调用点的名字，等价于 `info`（进行中）。 */
-export type MeterTone = 'accent' | 'info' | 'warning' | 'critical' | 'good';
+/**
+ * `accent` 是既有调用点的名字，等价于 `info`（进行中）。
+ *
+ * ## ★ 这里原来还有一档 `good`（绿）。**已删，而且删它是在把一个决定写成类型。**
+ *
+ * `components/common/statusTone.ts` 的文件头记着：`verifying` 曾被单独染成绿色
+ * （`DownloadRow` / `JobToaster` 各一处），意图是"下完了、快好了"，
+ * 但它把**进行中**讲成了**已完成**，而且两个渲染点还不一致。那两处已经改掉，
+ * 判据也写下来了 ——「verifying 的特殊性靠脉动条 + 那句『进度条不动是正常的』来表达，
+ * 不靠换色」。`good` 这一档就是那次修改的残留：全仓零调用点，
+ * 但只要它还在类型里，下一个人就能合法地把绿色重新加回进度条。
+ * 删掉之后那个决定由 `tsc` 执行，不再靠人读到那段注释。
+ * （`good` 这套色令牌本身没走 —— `StatusChip` 还在用。）
+ */
+export type MeterTone = 'accent' | 'info' | 'warning' | 'critical';
 
 const TONE_FILL: Record<MeterTone, string> = {
   accent: 'bg-info',
   info: 'bg-info',
   warning: 'bg-warning',
   critical: 'bg-critical',
-  good: 'bg-good',
 };
 
 const TONE_TRACK: Record<MeterTone, string> = {
@@ -43,7 +55,6 @@ const TONE_TRACK: Record<MeterTone, string> = {
   info: 'bg-info-tint',
   warning: 'bg-warning-tint',
   critical: 'bg-critical-tint',
-  good: 'bg-good-tint',
 };
 
 export interface ProgressMeterProps {
