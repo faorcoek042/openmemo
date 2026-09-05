@@ -59,6 +59,7 @@ import {
   checkDeletedNoteWritesRejected,
   checkDeletionInvisible,
   checkExportEnvelope,
+  checkExportableBeforeDelete,
   checkFolderCreated,
   checkFolderFilter,
   checkLlmEndpointCalled,
@@ -328,6 +329,18 @@ const SUITES = [
         { ref: { ...TOPIC_NODE.refs[0], transcriptUid: '01J8XXXXXXXXXXXXXXXXXXXXXX' } },
       ],
       ['转写稿是空的（对不出原文）', { segments: [] }],
+      [
+        '☑ 独占 / ✅ #90 的 ⑤-b：quote 是空串 —— `joined.includes("")` 恒真，从前这里是绿的',
+        { ref: { ...TOPIC_NODE.refs[0], quote: '' } },
+      ],
+      [
+        '☑ 独占：quote 全是空白（trim 之后还是空）—— 同一条空转的另一张脸',
+        { ref: { ...TOPIC_NODE.refs[0], quote: '   \n\t ' } },
+      ],
+      [
+        '☑ 独占：产品干脆不发 quote 这个字段（`String(undefined ?? "")` 也是空串）',
+        { ref: { transcriptUid: TR_UID, startMs: 4300, endMs: 9100 } },
+      ],
     ],
   },
   {
@@ -584,13 +597,42 @@ const SUITES = [
     ],
   },
   {
-    name: 'checkDeletedNoteWritesRejected（写路径同样 404）',
+    name: 'checkDeletedNoteWritesRejected（写路径同样 404，且导出那格的码对得上）',
     fn: checkDeletedNoteWritesRejected,
-    good: { patchStatus: 404, starStatus: 404, exportStatus: 404 },
+    good: {
+      patchStatus: 404,
+      starStatus: 404,
+      exportStatus: 404,
+      exportBody: { error: { code: ERROR_CODES.noteNotFound } },
+    },
     bad: [
       ['★★ 已删除的笔记还能被继续编辑', { patchStatus: 200 }],
       ['★ 已删除的笔记还能被打星标', { starStatus: 200 }],
       ['已删除的笔记还能被导出', { exportStatus: 200 }],
+      [
+        '☑ 独占 / ✅ #90 的 ⑤-a：404 的理由是「这条笔记没有导图」而不是「这条笔记不存在」——' +
+          ' 软删守卫被抽掉时就长这样，从前这里是绿的',
+        { exportBody: { error: { code: ERROR_CODES.noMindmap } } },
+      ],
+      ['☑ 独占：导出 404 了但连 error 那一格都没有', { exportBody: {} }],
+    ],
+  },
+  {
+    name: 'checkExportableBeforeDelete（★ 非空虚前提：删之前这条笔记真的有导图）',
+    fn: checkExportableBeforeDelete,
+    good: {
+      status: 200,
+      contentType: EXPORT_EXPECTATIONS.md.ct,
+      body: `# 会议纪要\n- 会议主题 ${NONCE}\n`,
+    },
+    bad: [
+      [
+        '★★ 夹具那一半悄悄失败了：这条笔记根本没有导图 ⇒ F5-a6 的错误码那格会恒红，' +
+          '把"夹具没造出来"报成"产品退化了"',
+        { status: 404 },
+      ],
+      ['content-type 不对（导出的不是 md）', { contentType: 'application/json; charset=utf-8' }],
+      ['★ 回了 200 但正文是空的 —— 这份导图是个空壳', { body: '' }],
     ],
   },
   {
@@ -1218,6 +1260,43 @@ degraded(
   '"任何无扩展名路径都回 200"的兜底会把本该 404 的东西变成 200 —— 只看状态码的判据看不见',
 );
 
+/* ── ③-h ✅ #90 的 ⑤-a：退化成「只钉状态码，不看错误码」 ────────────────────── */
+const deletedWritesStatusOnly = ({ patchStatus, starStatus, exportStatus }) =>
+  patchStatus === 404 && starStatus === 404 && exportStatus === 404
+    ? { ok: true, reason: '三条写路径全是 404' }
+    : { ok: false, reason: '有一条不是 404' };
+degraded(
+  'checkDeletedNoteWritesRejected',
+  deletedWritesStatusOnly,
+  checkDeletedNoteWritesRejected,
+  {
+    patchStatus: 404,
+    starStatus: 404,
+    exportStatus: 404,
+    exportBody: { error: { code: ERROR_CODES.noMindmap } },
+  },
+  `★ 软删守卫被从导出路由抽掉 ⇒ 404 的理由变成「这条笔记没有导图」（${ERROR_CODES.noMindmap}）——` +
+    ' 只钉状态码的那一版正是 #90 抓到的那条空转',
+);
+
+/* ── ③-i ✅ #90 的 ⑤-b：退化成「只做 includes，不问 quote 空不空」 ──────────── */
+const quoteIncludesOnly = ({ ref, segments, transcriptUid }) => {
+  const joined = (segments ?? []).map((s) => String(s?.text ?? '').trim()).join(' ');
+  const quote = String(ref?.quote ?? '').trim();
+  if (!joined.includes(quote.slice(0, 60))) return { ok: false, reason: 'quote 不是原文逐字' };
+  return String(ref?.transcriptUid) === String(transcriptUid)
+    ? { ok: true, reason: 'quote 对得上' }
+    : { ok: false, reason: 'transcriptUid 不对' };
+};
+degraded(
+  'checkRefQuoteVerbatim',
+  quoteIncludesOnly,
+  checkRefQuoteVerbatim,
+  { ref: { ...TOPIC_NODE.refs[0], quote: '' }, segments: SEGMENTS, transcriptUid: TR_UID },
+  '★ `joined.includes("")` 在 JS 里**恒真** —— 一条 quote 为空的 ref 重转写之后永久失效，' +
+    '而退化版对它一个字都不说',
+);
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 say('');
 say('── ④ 契约漂移守卫：判据里的字面量必须真的还在产品源码里');
@@ -1271,13 +1350,42 @@ function pinLiteral(label, src, needle, notNeedle) {
 
   /*
    * ★ `NO_MINDMAP` 与「笔记查不到 ⇒ 404」这两条**同时**在导出路由上成立，
-   *   正是 ⑤-a 那条空转的成因。这里正面核一次它们都还在。
+   *   正是 ⑤-a 那条空转的成因 —— 也正是 F5-a6 现在必须连错误码一起钉的理由。
+   *   它哪天消失了（比如导出改成对"没有导图"回 200 空文档），那条判据的
+   *   `exportCode` 就该跟着重看：这里红一次，把这件事交到改它的人手上。
    */
   pinLiteral(
-    '导出路由的 NO_MINDMAP 分支（⑤-a 那条空转的成因）',
+    '导出路由的 NO_MINDMAP 分支（F5-a6 必须分码的理由）',
     contentTs,
     `'${ERROR_CODES.noMindmap}', 'no mindmap for this note'`,
     `'${ERROR_CODES.noMindmap}', 'definitely-not-real-${stamp}'`,
+  );
+}
+
+{
+  /*
+   * ★★ 「产品发空 `quote`」**今天不可达** —— 而这条守卫盯的就是那个"今天"。
+   *
+   * `checkRefQuoteVerbatim` 的空 quote 那一格（#90 的 ⑤-b）价值是**纵深**：
+   * 上游 `packages/mindmap/src/validate.ts` 已经挡住了生成与 PATCH 两条路径，
+   * 所以端到端这一层今天不该看到空 quote。**那道闸一旦被放松，
+   * 端到端这一层就是唯一还看得见的地方** —— 所以它没了必须有人知道。
+   *
+   * 判据钉的是**那条判断本身**（D-02 §3.5 的实现），不是"文件里出现过这几个字"。
+   */
+  const validateTs = readFileSync(join(REPO, 'packages', 'mindmap', 'src', 'validate.ts'), 'utf8');
+  const stamp = Date.now();
+  pinLiteral(
+    '上游那道闸：validate.ts 的 REF_MISSING_QUOTE（D-02 §3.5）',
+    validateTs,
+    'if (!ref.quote || ref.quote.trim().length === 0)',
+    `if (!ref.quote_not_real_${stamp})`,
+  );
+  pinLiteral(
+    '上游那道闸的错误码',
+    validateTs,
+    "'REF_MISSING_QUOTE'",
+    `'REF_MISSING_QUOTE_NOT_REAL_${stamp}'`,
   );
 }
 
@@ -1482,26 +1590,17 @@ function registerVacuity(name, aLabel, a, bLabel, b, fn, howToFix) {
   }
 }
 
-registerVacuity(
-  '⑤-a F5-a6 的 export 那一格',
-  '已删除的笔记被软删守卫拒了（404 NOTE_NOT_FOUND）',
-  { patchStatus: 404, starStatus: 404, exportStatus: 404 },
-  '守卫被整个抽掉、笔记查得到，但它本来就没有导图（404 NO_MINDMAP）',
-  { patchStatus: 404, starStatus: 404, exportStatus: 404 },
-  checkDeletedNoteWritesRejected,
-  '① 换一条**真有导图**的笔记走这一格（主角笔记有），或 ② 连错误码一起钉' +
-    `（\`${ERROR_CODES.noteNotFound}\` ≠ \`${ERROR_CODES.noMindmap}\`）`,
-);
-
-registerVacuity(
-  '⑤-b checkRefQuoteVerbatim 的 quote 那一格',
-  'quote 是转写稿里的原文逐字',
-  { ref: TOPIC_NODE.refs[0], segments: SEGMENTS, transcriptUid: TR_UID },
-  '★ quote 是**空串**（重转写之后这条 ref 永久失效）—— `joined.includes("")` 恒真',
-  { ref: { ...TOPIC_NODE.refs[0], quote: '' }, segments: SEGMENTS, transcriptUid: TR_UID },
-  checkRefQuoteVerbatim,
-  '加一行 `must(quote.length > 0, …)` —— 一行的事，但那是「改判什么」，要 owner 点头',
-);
+/*
+ * ── ✅ ⑤-a 与 ⑤-b 已修（Manager 2026-09-06），**桩已拆** ──────────────────────
+ *
+ * 两条的登记桩在这里存在过一天，现在删掉了 —— 这正是它们设计时说好的那一步：
+ * 「修好的那天这里会红，逼出一次显式的删桩 + 更新报告」。
+ * 它们今天的牙齿在②表里（`checkDeletedNoteWritesRejected` 的错误码那一格、
+ * `checkRefQuoteVerbatim` 的空 quote 那一格，各带一条 `☑ 独占` 用例），
+ * 以及下面 ③-h / ③-i 两组「退化版放过、现行版抓住」的对照。
+ *
+ * ⑤-c **没修**（要动 `apps/daemon`，另一路正在动那儿），桩还在。
+ */
 
 registerVacuity(
   '⑤-c classifyToolChecks 的 borrowed 那一档（拿散文当判据）',
