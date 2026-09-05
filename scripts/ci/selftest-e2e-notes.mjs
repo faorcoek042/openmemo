@@ -94,6 +94,12 @@ import {
   parseOutlineIndices,
   uidsOfNotePage,
 } from './e2e-notes-assertions.mjs';
+/*
+ * ★ 只取那份**记录**，不跑那个工具 —— 逐格重扫要几十秒，而门禁要的是快速判决。
+ *   `leg-coverage.mjs` 刻意不挂进 `test:ci-scripts`（它的名字不以 `selftest-` 开头，
+ *   所以 T-163 的全集扫描不会要求它接链）。见那份文件头「为什么它不是门禁」。
+ */
+import { SUBSUMED_LEGS } from './leg-coverage.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -1055,33 +1061,59 @@ for (const s of SUITES) {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+say('');
+say('── ②-bis 「删了也绿」那 7 格的登记还对得上吗（`leg-coverage.mjs` 的门禁那一半）');
+
 /*
- * ── ②-bis 「每一格都有专属坏输入吗」—— 一次性扫过的结果，写在这里备查 ──────────
+ * ②只保证「每条判据至少有一个坏输入」。更强的那个问题是「**判据里的每一格**
+ * 是不是都有一个只有它会响的输入」——把那一格删掉，②还红不红？
  *
- * ②只保证「每条判据至少有一个坏输入」。更强的问题是「**判据里的每一格**是不是
- * 都有一个只有它会响的输入」——把那一格删掉，②还红不红？
+ * 那个问题由 `scripts/ci/leg-coverage.mjs` 回答（手动跑，几十秒，逐格删了再跑本文件）。
+ * `[实测 2026-09-06]` 99 格 → **91 格有专属坏输入**（上面打 `☑ 独占` 的那些就是为补齐
+ * 它们加的：第一次扫 94 格里有 22 格没有）；剩 7 格删掉之后自检**照样绿** ——
+ * 因为②表里每个坏输入都会被**相邻那一格先判红**，没有用例专门盯着它们。
+ * 它们不是空转（缺陷仍会被相邻那格抓住），是**数学上被吞掉**，
+ * 理由逐条记在 `SUBSUMED_LEGS` 里。另有 1 格删掉就 TypeError，判不了。
  *
- * 复现（一次性，不入库；`all([…])` 的每一格逐条删掉再跑本文件）：
- *   把每个 `() => …` 条目从 `e2e-notes-assertions.mjs` 里删掉一格，
- *   `node scripts/ci/selftest-e2e-notes.mjs` 必须红。
+ * ★ 这一段是那个工具的**门禁那一半**，秒级：`SUBSUMED_LEGS` 里每条 `needle`
+ *   必须在判据源码里**恰好出现一次**。
  *
- * `[实测 2026-09-06]` 94 格里 **87 格有专属坏输入**（上面打 `☑ 独占` 的那些就是
- * 为补齐它们加的：第一次扫出 22 格没有）。剩下 **7 格删掉之后自检仍然红** ——
- * 它们不是空转，是**数学上被相邻那一格吞掉**的：删了照样有格子响，只是
- * 报出来的话会难懂一点。逐条写出来，免得下一个人以为这里扫干净了：
+ * ⚠️ 为什么非要有这一段：#90 里那个扫描器是跑完就删的临时脚本，只在文件头留了
+ * 一句"复现命令"。**这个仓已经证明过"下一个人记得读文件头"不成立** ——
+ * 那 22 格就是这么长出来的。所以这份记录不靠人记得回来重跑：
+ * 有人动了这 7 格里的任何一格，这里当场红，把他领到 `leg-coverage.mjs` 跟前。
  *
- *   · `ps.length > 0`（分页）      —— pages 为空 ⇒ total 是 NaN ⇒ `total > pageSize` 必响
- *   · `ps.length >= 2`（分页）      —— 只有一页时：满 50 而 total>50 ⇒ `seen.size≠total` 必响；
- *                                     total≤50 ⇒ `total > pageSize` 必响
- *   · `Number.isFinite`（星标筛）   —— 非数字 ⇒ `s < a` 恒假 ⇒ 下一格必响
- *   · `s < a`（星标筛）             —— `s ≥ a` ⇒ `a - s ≤ 0 < 3` ⇒ 下一格必响
- *   · `!!cn`（selfcheck 探针在不在）—— cn 缺席 ⇒ `cn?.status` 是 undefined ≠ 'ok' ⇒ 下一格必响
- *   · `!!hit` ×2（F5-e1 / F5-e2）   —— hit 缺席 ⇒ `Number.isInteger(undefined)` /
- *                                     `Number(undefined) <= dur` 都为假 ⇒ 下一格必响
- *
- * ⚠️ 这 7 格**不许**因为"反正有别人守着"就删掉：它们守的是**那句话说得清不清楚**。
- * 一条 `starred total=NaN 不小于全量 total=NaN` 的报错，读日志的人查不出方向。
+ * ⚠️ 它**不是豁免名单**。名单里记的不是"这几格不用管"，是"这几格为什么被吞掉"，
+ * 而且每一条都是**可核对的事实**（源码里恰好一处）。
  */
+{
+  const src = readFileSync(join(REPO, 'scripts', 'ci', 'e2e-notes-assertions.mjs'), 'utf8');
+  assert.ok(
+    SUBSUMED_LEGS.length >= 5,
+    `SUBSUMED_LEGS 只剩 ${SUBSUMED_LEGS.length} 条 —— 少于 5 条时多半是这份记录被清空了，` +
+      '而它被清空的样子和"全都补上专属坏输入了"一模一样。真补齐了请连这条地板一起改。',
+  );
+  for (const leg of SUBSUMED_LEGS) {
+    const hits = src.split(leg.needle).length - 1;
+    if (hits === 1) {
+      ok(
+        `「${leg.needle.slice(0, 44)}…」在判据源码里恰好一处（被吞掉的理由：${leg.why.slice(0, 40)}…）`,
+      );
+    } else {
+      bad(
+        `SUBSUMED_LEGS 对不上判据源码：\`${leg.needle.slice(0, 60)}\``,
+        `源码里 ${hits} 处（期望恰好 1 处）—— 这一格被改/删/复制了。\n` +
+          `      它原本是「删了也绿」的 7 格之一，理由是：${leg.why}\n` +
+          '      请重跑 `node scripts/ci/leg-coverage.mjs`，并更新 SUBSUMED_LEGS。',
+      );
+    }
+  }
+  // 前提检查：拿一个必不存在的 needle 过一遍，证明上面那组不是恒真
+  if (src.includes(`must(definitely_not_a_real_leg_${Date.now()})`))
+    bad('②-bis 的前提检查', '不可能的 needle 竟然命中了 —— 这组守卫是恒真的');
+  else ok('②-bis 的前提检查：不存在的 needle 确实匹配不到（上面那组不是恒真）');
+}
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 say('');
