@@ -228,7 +228,23 @@ jobs:
             --bundle "${{ steps.bundle.outputs.bundle_dir }}" \
             --port ${{ matrix.port }} \
             --fixture-port $(( ${{ matrix.port }} + 1 )) \
-            ${{ inputs.skipF1 && '--skip-f1' || '' }}
+            ${{ inputs.skipF1 && '--skip-f1' || '' }} \
+            --undecided-out "e2e-import-undecided-${{ matrix.label }}.json"
+
+      # ★ 覆盖面（undecided 计数）单独一份 artifact，供 attest job 跨平台求和后
+      # 传给 emit-e2e-attestation.mjs --undecided（与另外五条腿逐字同一模式）。
+      #
+      # 无条件上传、**失败也传**：这是覆盖面统计不是判定。判定早已由 `needs: [e2e]`
+      # 管住 —— 红的 run 里 attest 作业根本不跑，这份文件也就没人读。
+      # 而红的 run 里**照样落盘**是有意的：它让「这一轮到底有几条没验到」在事后
+      # 读日志时说得出来，而不是只剩一句"红了"。
+      - name: 留档（覆盖面计数）
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: e2e-import-undecided-${{ matrix.label }}
+          path: e2e-import-undecided-${{ matrix.label }}.json
+          if-no-files-found: warn
 
   # ═══════════════════════════════════════════════════════════════════════════════════
   # 发一张「这条腿对着**这一批包**跑绿过」的凭证。
@@ -287,6 +303,11 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    # ⚠️ 与 `--expect-labels` / `--platforms` 共用一个来源：两处各写一份的那天，
+    #    `sum-undecided.mjs` 的双向比对会因为"少了一格"而收敛成 null —— 而那与
+    #    「没接线」在所有灯上长得一样（与 e2e-notes.yml 的 attest job 同一写法）。
+    env:
+      PLATFORMS: linux-x64,darwin-arm64,win32-x64
     steps:
       - uses: actions/checkout@v6
 
@@ -294,48 +315,62 @@ jobs:
         with:
           node-version: '22'
 
-      # ★ --undecided（Manager 2026-08-11 裁决，import 腿）
+      # ═════════════════════════════════════════════════════════════════════════════
+      # ★ --undecided：**从写死改成真管道**（Manager 2026-09-06 裁决）
       #
-      # runtime/browser 两条腿是**三态**（PASS/FAIL/UNKNOWN），"前提在这台 runner 上
-      # 构造不出来"有专门的第三态承接，所以要真的跨平台数、跨平台求和
-      # （见 sum-undecided.mjs）。import 腿不是同一个形状 —— 它对**判决**来说是
-      # **二态**（`ok: true/false` 驱动 `exitCode`）。
+      # ⚠️ 这里原来写着一整段论证，结论是「这条腿**设计上不产生未决**，
+      #    所以 `--undecided ${{ inputs.skipF1 && '1' || '0' }}` 结构上恒为 0/1」。
+      #    **那段论证在 2026-09-06 之前是对的，现在不是了**，所以整段删掉而不是留着：
       #
-      # `e2e-import-audit.mjs` 的总表里确实会出现 `ok: null`（第 13 节渲染成
-      # "⊘ 跳过"），而且不止 `--skip-f1` 一处——F2/F2b 在样本没造出来时也会补一条
-      # `ok: null` 的行（2026-08-11 补的，见该文件 §9/§10 附近注释：以前这种情况
-      # 是总表里那一行凭空消失，不留痕迹，比 undecided 更难查）。但这些 `null`
-      # **只用于把总表填完整，从不影响判决**：F2/F2b 会补 null 行，前提必然是
-      # 第 7 节的"样本没造出来"已经 `fail()` 判过一次红——判决已经定了，这里不会
-      # 再重复 `fail()`。
+      #    #98 抓到 `e2e-import-audit.mjs` 里一条真的空转 —— `media.ready` 这个 SSE
+      #    事件收不到时，`hasVideo` 那格**只 say 不 fail**，`ok` 保持 true ⇒
+      #    总表照旧「✔ 通过」。修法**不是**改成 fail（收不到可能是真的未决：时序、
+      #    连接抖动），而是给它第三态。于是这条腿**从今天起真的会在绿跑里产生未决**，
+      #    老那段「绿跑里不可能有未决」的推理随之失效。
       #
-      # 这不是"这条腿没有 undecided 概念"，是**它主动把 undecided 换成了 FAIL**：
-      # `e2e-import-audit.mjs` 里"环境没准备好"（比如 fixture 主机名没指向回环，
-      # 或者样本没造出来）曾经也报成 `ok: null` 然后照常 `exit 0`，后来被改掉——
-      # PROTOCOL §11：「跳过不许渲染成成功」，现在当场判 `fail()`。一条判 fail 的腿，
-      # `needs: [e2e]` 会让这个 attest job **直接不跑**，凭证根本不会发出来——不存在
-      # "三平台都绿、但暗地里有几条没验到"这种状态留给 undecided 去描述。
+      #    留着一段已经不成立的论证 + 一个写死的 0，就是这条管道当初要消灭的东西：
+      #    **「查过了确实是 0」和「我们选择不说」长得一模一样。**
       #
-      # 所以上面说的"F2/F2b 补的 `ok: null` 行"和这里的 `--undecided 0` 不矛盾：
-      # 那些行只会出现在一次已经判红、attest job 根本不会跑的运行里——凭证只在
-      # run 绿的时候产出，而 run 绿意味着所有样本都造出来了，F2/F2b 不存在没跑到
-      # 的子用例。**标准门禁跑法下**（`skipF1=false`，release-upload.yml 的
-      # e2e-gate 用的就是这条默认路径）这个数**结构上恒为 0**：不是"没查"，是
-      # "这条腿设计上不产生未决"。⚠️ 如果哪天想把"总表里有 null 行"当成
-      # `--undecided` 该跟着变的信号，先想清楚：那是红跑才会出现的东西，
-      # 而这个数只在绿跑里发出去，两者压根不会在同一次运行里同时存在。
+      # 接线的八个名字（①〜⑥ 在 YAML 里，⑦⑧ 是 JSON 键）由
+      # `scripts/ci/selftest-undecided-wiring.mjs` 的 R1–R7 逐条钉着 ——
+      # 任意两处对不上，`sum-undecided.mjs` 会按它自己的裁决只警告 + 收敛成 null，
+      # 而那与「这条腿从来没接过线」在所有灯上长得一样。
       #
-      # 唯一真实的例外是人为诊断跑法：`--skip-f1`（"只在排查 F2 时用"，输入自己的
-      # 说明写着）。那种情况下 F1 是真的一条都没验，如实报 1，不假装成 0——
-      # 留 0 会把"我们知道答案是 0"变成"我们选择不说"，两者不是一回事。
+      # ★ `--reduce` 用**默认的 `sum`**：本腿的未决是「**某台 runner 上**那条
+      #   SSE 事件没收到」——三格各自独立的事实，该相加。`agree` 是给「三格是同一件事
+      #   的三次观察」用的（`e2e-allcomponents` 那种平台无关的缺口清单）。
+      # ═════════════════════════════════════════════════════════════════════════════
+      - name: 下载三平台的覆盖面计数
+        uses: actions/download-artifact@v7
+        with:
+          pattern: e2e-import-undecided-*
+          path: undecided
+          merge-multiple: true
+
+      # 任何一格对不上，sum-undecided.mjs 只会警告 + 把 undecided_flag 收敛成
+      # 空字符串（⇒ emit 收到它自己的默认值 `null`），**不会**让这一步失败 ——
+      # 一个纯展示用的覆盖面统计出故障，不该连累下面「写凭证」那一步
+      # （那一步产出的 artifact 名字才是闸门真正认的信号）。
+      - name: 求和覆盖面计数
+        id: sum
+        run: |
+          node scripts/ci/sum-undecided.mjs \
+            --dir undecided \
+            --expect-labels "$PLATFORMS" \
+            --file-template 'e2e-import-undecided-{label}.json' \
+            --github-output "$GITHUB_OUTPUT"
+
+      # ⚠️ `${{ steps.sum.outputs.undecided_flag }}` **不许加引号**：加了会把
+      #    `--undecided 3` 变成一个 argv 词，`arg()` 找不到 `--undecided` ⇒
+      #    静默退回 null ⇒ 与断线同形。R6 正面钉着这一条。
       - name: 写凭证
         id: attest
         run: |
           node scripts/ci/emit-e2e-attestation.mjs \
             --leg import \
             --bundle-run "${{ needs.e2e.outputs.bundle_run_id }}" \
-            --platforms linux-x64,darwin-arm64,win32-x64 \
-            --undecided ${{ inputs.skipF1 && '1' || '0' }} \
+            --platforms "$PLATFORMS" \
+            ${{ steps.sum.outputs.undecided_flag }} \
             --out dist/e2e-attest.json
 
       - uses: actions/upload-artifact@v6

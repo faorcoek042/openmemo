@@ -53,6 +53,7 @@ import {
   existsSync,
   accessSync,
   readdirSync,
+  realpathSync,
   constants as fsConstants,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -99,7 +100,7 @@ import {
   checkDaemonPidIdentity,
   checkFixtureBuilt,
   checkFixtureHostLoopback,
-  checkFixtureWasFetched,
+  checkFetchedByYtdlp,
   checkFullFetch,
   checkH264EncoderAvailable,
   checkHasVideoContract,
@@ -123,6 +124,7 @@ import {
   missingFixtureKinds,
   parseFixtureRange,
   pickH264Encoder,
+  expectedContentType,
   pickSmallestWhisperAsr,
   pickVadModels,
   verdictMark,
@@ -182,6 +184,38 @@ const hdr = (s) => {
 const failures = [];
 /** 人为跳过的用例。§11：跳过不许渲染成成功 —— 结论区必须把它喊出来。 */
 const skippedOnPurpose = [];
+/**
+ * **未决**（跑了，但什么都没证明）—— 三态里的第三态。
+ *
+ * ## 为什么这条腿现在有第三态了（#98 抓到的 ⑤-a，Manager 2026-09-06 裁决）
+ *
+ * 此前 `media.ready` 收不到时这里只 `say()` 一句，`ok` 保持 true ⇒
+ * 总表那一行照旧「✔ 通过」。**SSE 事件名改一个字，`hasVideo` 那条契约就再也
+ * 没有读者，而没有任何东西会红。**
+ *
+ * ⚠️ 裁决明写**不许直接改成 `fail()`**：收不到可能是**真的未决**
+ * （时序、连接抖动、事件在断言窗口之后才到），把未决判成失败是另一种说假话。
+ * 判据是「**这一格有没有资格说通过**」—— 收不到就是没资格：报未决、**计入未决计数**，
+ * 不是绿，也不是红。
+ *
+ * 这个数经 `--undecided-out` → `sum-undecided.mjs` → `emit-e2e-attestation.mjs`
+ * 落进凭证（八处手写名字，由 `selftest-undecided-wiring.mjs` 的 R1–R7 守着）。
+ * `null`（没上报）与 `0`（查过了确实没有）在凭证里是两件事。
+ */
+const undecideds = [];
+const undecided = (step, detail) => {
+  undecideds.push({ step, detail });
+  say(`   ? [${step}] ${detail}`);
+};
+/**
+ * 未决计数落盘的去处（`{ "unknowns": N }`，键名与另外五条腿逐字相同）。
+ *
+ * ⚠️ 键名是这条管道**第八个必须对齐的名字**：改成别的（`undecidedCount` 之类）
+ * 时五个文件名仍然逐字对齐、接线自检全绿，而 `sum-undecided.mjs` 会读不到字段 ⇒
+ * 警告 ⇒ 收敛成 null ⇒ 凭证退回「没上报覆盖面」——与从没接过线一模一样。
+ * `selftest-undecided-wiring.mjs` 的 R7 正面盯着**代码位置**上的这个键。
+ */
+const UNDECIDED_OUT = arg('--undecided-out', null);
 /** 单次 HTTP 调用的上限（§11：一切外部命令带超时）。轮询靠 waitForJob 的圈数兜。 */
 const HTTP_TIMEOUT_MS = Number(arg('--http-timeout-ms', '120000'));
 const fail = (step, detail) => {
@@ -771,11 +805,32 @@ try {
    *    已登记，见 `checkToolUnderStoreRoot()` 的注释与 `selftest-e2e-import.mjs` ⑤-b。
    *    **本轮不改判据**，只是让它可以被喂输入。
    */
+  /*
+   * ★ `realpathSync` 是 ③-a 的一半：判据要问的是「**它在不在 storeRoot 底下**」，
+   *   而 `findUnder(STORE_ROOT, …)` 只回答得了「storeRoot 底下有没有」。
+   *   storeRoot 里放一个指向 `/usr/bin/ffmpeg` 的软链时，老判据看到一个 storeRoot
+   *   打头的字符串就说「产品自己下载并校验的那一份」—— **而那正是宿主那个**。
+   *   解不开就退回原路径（软链坏了/权限不够是另一回事，不该在这里变成假红）。
+   */
+  const realOf = (p) => {
+    if (!p) return p;
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const REAL_FFMPEG = realOf(PRODUCT_FFMPEG);
+  if (REAL_FFMPEG && REAL_FFMPEG !== PRODUCT_FFMPEG) {
+    say(`   ffmpeg 真实路径（解开软链）: ${REAL_FFMPEG}`);
+  }
   const ffVerdict = checkToolUnderStoreRoot({
     found: PRODUCT_FFMPEG,
-    storeRoot: STORE_ROOT,
+    realFound: REAL_FFMPEG,
+    storeRoot: realOf(STORE_ROOT),
     name: 'ffmpeg',
     whyNeeded: '后面造不出样本',
+    platform: process.platform,
   });
   if (!ffVerdict.ok) {
     fail('6.ffmpeg', ffVerdict.reason);
@@ -944,7 +999,7 @@ try {
    *
    * @param expectSha 期望的 sha256；F1 那边 yt-dlp 可能改容器，传 null 表示只验形状不验相等。
    */
-  async function assertPlayable(tag, noteUid, expectSha, expectBytes) {
+  async function assertPlayable(tag, noteUid, expectSha, expectBytes, expectContentType = null) {
     const nd = await j(`/api/notes/${encodeURIComponent(noteUid)}`);
     const fetched = checkNoteFetched({ status: nd.status, body: nd.body, noteUid });
     if (!fetched.ok) {
@@ -977,15 +1032,20 @@ try {
       `   GET ${orig.url} → ${full.status}  ${full.buf.length} B  Content-Type=${ctype}  Content-Length=${clen}  Accept-Ranges=${aranges}`,
     );
     /*
-     * 四格**平行**（`collect`）：抽出前是四个各自 `fail()` 的 `if`，一次跑完要能看到全部。
-     * ⚠️ `ctype` 只被上面那句 `say()` 打印，**从来没有被判过** —— 而本函数的文档写着
-     *    「Content-Type 对」。已登记（`selftest-e2e-import.mjs` ⑤-c），本轮不补。
+     * 六格**平行**（`collect`）：抽出前是四个各自 `fail()` 的 `if`，一次跑完要能看到全部。
+     * ✅ 后两格是 ⑤-c 补上的：`ctype` 此前**只被上面那句 `say()` 打印，从来没有被判过**，
+     *    而本函数的文档从第一天起就写着「Content-Type 对」。
+     *    `expectContentType` 由调用方按**扩展名**给（`expectedContentType()`）——
+     *    F1 那条传 null（yt-dlp 可能换容器，扩展名事先不知道），但「头必须在」那一格
+     *    对所有调用点都成立。
      */
     for (const r of checkFullFetch({
       status: full.status,
       buf: full.buf,
       contentLength: clen,
       acceptRanges: aranges,
+      contentType: ctype,
+      expectContentType,
     }).reasons) {
       fail(tag, r);
       ok = false;
@@ -1055,11 +1115,14 @@ try {
     say(
       `   Range bytes=${size + 100}- → ${r3.status}  Content-Range=${r3.headers.get('content-range')}`,
     );
-    // ⚠️ 只钉状态码 —— 文档里那句「+ Content-Range: bytes * /size」**没有被验**。
-    //    已登记（`selftest-e2e-import.mjs` ⑤-c），本轮不补。
-    const r3Verdict = checkUnsatisfiableRange({ status: r3.status });
-    if (!r3Verdict.ok) {
-      fail(tag, r3Verdict.reason);
+    // ✅ ⑤-c 补上的另一半：此前只钉状态码，而文档写着「416 + Content-Range: bytes * /size」。
+    //    产品（`media.ts`）**逐字发了那个头**，是守卫没在看。播放器靠它拿真实总长。
+    for (const r of checkUnsatisfiableRange({
+      status: r3.status,
+      contentRange: r3.headers.get('content-range'),
+      expectSize: size,
+    }).reasons) {
+      fail(tag, r);
       ok = false;
     }
 
@@ -1141,7 +1204,19 @@ try {
       results.push({ name: fx.name, what: fx.what, ok: false, note: st.state });
       continue;
     }
-    let ok = await assertPlayable(`F2:${fx.name}`, up.body.noteUid, fx.sha, fx.bytes);
+    /*
+     * ★ 期望的 Content-Type 由**扩展名**给（`expectedContentType()`，镜像 `media.ts`
+     *   的 `MIME_BY_EXT`）——`media_assets.mime` 对 original 刻意是 NULL，由 `/media`
+     *   的 `guessMime()` 兜底。"顺手把 mime 补上真值"会让 mp3 变得不可播，
+     *   而那是产品源码里点名的失败面。
+     */
+    let ok = await assertPlayable(
+      `F2:${fx.name}`,
+      up.body.noteUid,
+      fx.sha,
+      fx.bytes,
+      expectedContentType(fx.name),
+    );
     /*
      * ★ `media.ready.hasVideo` 必须说真话：带视频的 mp4 → true，纯音轨 → false。
      *   事件是异步来的，给它一点时间；**收不到就如实说收不到，不当成通过**。
@@ -1153,22 +1228,44 @@ try {
       if (!ready) await new Promise((r) => setTimeout(r, 250));
     }
     /*
-     * 🔴 **已登记空转（①）**：`undecided` 那一支（收不到事件）今天**只 say 不 fail**，
-     *    于是 `ok` 保持 true、总表那一行照旧是「✔ 通过」。SSE 的事件名改一个字，
-     *    这条契约就再也没有读者了，而没有任何东西会红。
-     *    上面那句注释写的是「收不到就如实说收不到，**不当成通过**」—— 代码不是这么做的。
-     *    **本轮不改**（改了就是改这条腿判什么）；桩在 `selftest-e2e-import.mjs` ⑤-a。
+     * ✅ **已修（#98 的 ⑤-a，Manager 2026-09-06 裁决）**：三支各走各的。
+     *
+     * 此前 `!ready` 那一支**只 say 不 fail**，`ok` 保持 true ⇒ 总表照旧「✔ 通过」，
+     * 而那一段的注释写着「收不到就如实说收不到，**不当成通过**」。
+     *
+     * ⚠️ 裁决明写**不许直接改成 fail**：收不到可能是真的未决（时序 / 连接抖动）。
+     *    判据是「这一格有没有资格说通过」—— 没资格 ⇒ **记未决**，
+     *    进 `undecideds`、进凭证的 `undecided` 计数，**总表那一行也改成 ⊘**。
+     * ⚠️ 三支必须都写：只写 `if (!hv.ok)` 会把未决重新读成失败，
+     *    只写 `if (hv.ok)` 会把未决重新读成通过。自检里两个方向都钉着。
      */
     const hv = checkHasVideoContract({ ready, wantVideo, what: fx.what });
+    let hasVideoUndecided = false;
     if (hv.undecided) {
-      say(`   ⚠️ 没收到 media.ready（noteUid=${up.body.noteUid}）—— hasVideo 本例未验证`);
+      hasVideoUndecided = true;
+      undecided(`F2:${fx.name}`, `${hv.reason}（noteUid=${up.body.noteUid}）`);
     } else if (!hv.ok) {
       fail(`F2:${fx.name}`, hv.reason);
       ok = false;
     } else {
       say(`   ✔ media.ready.hasVideo=${ready.hasVideo}（与"${fx.what}"相符）`);
     }
-    results.push({ name: fx.name, what: fx.what, ok, note: ok ? '可播放' : '播放断言失败' });
+    /*
+     * ⚠️ 未决**不许渲染成"✔ 通过"**（PROTOCOL §11 的同一条）：其它格都过了、
+     *    只有 hasVideo 那一格没验到时，这一行是 `ok: null`（总表渲染成"⊘ 跳过"）
+     *    并在 note 里点名是哪一格 —— 而不是一行看起来和全验过一模一样的绿。
+     *    失败优先于未决：真红了就得是红。
+     */
+    results.push({
+      name: fx.name,
+      what: fx.what,
+      ok: ok ? (hasVideoUndecided ? null : true) : false,
+      note: ok
+        ? hasVideoUndecided
+          ? '可播放，但 media.ready 没收到 ⇒ hasVideo 未决'
+          : '可播放'
+        : '播放断言失败',
+    });
   }
 
   /*
@@ -1239,7 +1336,13 @@ try {
         fail('F2b', checkJobSucceeded({ state: st.state, text: st.text }).reason);
         results.push({ name: 'F2b 绝对路径', what: '传路径导入', ok: false, note: st.state });
       } else {
-        const ok = await assertPlayable('F2b', imp.body.noteUid, fx.sha, fx.bytes);
+        const ok = await assertPlayable(
+          'F2b',
+          imp.body.noteUid,
+          fx.sha,
+          fx.bytes,
+          expectedContentType(fx.name),
+        );
         results.push({
           name: 'F2b 绝对路径',
           what: '传路径导入',
@@ -1324,6 +1427,13 @@ try {
      */
     say('   ⚠️ --skip-f1：本轮**跳过 F1**。这一轮的绿灯不包含链接导入。');
     skippedOnPurpose.push('F1 链接导入（--skip-f1）');
+    /*
+     * ★ 它**也是一条未决**，而且是这条腿此前唯一承认的那一条：
+     *   workflow 里那句 `--undecided ${{ inputs.skipF1 && '1' || '0' }}` 说的就是它。
+     *   现在改由审计**自己数**（真管道），那个写死的表达式随之删掉 ——
+     *   写死的数在这条腿新增第三态（hasVideo 未决）的那一刻就开始说假话。
+     */
+    undecided('F1', '整条 F1 被 --skip-f1 跳过 —— 链接导入这一轮一条都没验');
     results.push({
       name: 'F1 链接导入',
       what: 'yt-dlp 取回',
@@ -1492,24 +1602,28 @@ try {
          * 只是不再拿它回答"是谁"。
          */
         /*
-         * 🔴 **已登记空转（③）**：这里**唯一**会红的是"一个请求都没收到"。
-         *    `adapterId` 不是 yt-dlp 时只 `say('ⓘ …')` —— 也就是说 registry 的
-         *    fallback 链哪天变了（或这个字段改名 ⇒ 恒为 null），F1 仍然全绿，
-         *    而 workflow 与本文件头里那句「验到了 yt-dlp 那一段」从那天起是假话。
-         *    `fixtureHits > 0` 只证明了**有人**去取过 —— DirectHttp 去取也满足它。
-         *    **本轮不改**；桩在 `selftest-e2e-import.mjs` ⑤-d。
+         * ✅ **已修（#98 的 ⑤-d，Manager 2026-09-06 裁决"放进判决"）**。
+         *
+         * 此前这里**唯一**会红的是"一个请求都没收到"，`adapterId` 不是 yt-dlp 时
+         * 只 `say('ⓘ …')`。而 **`fixtureHits > 0` 只证明「有人」去取过 ——
+         * DirectHttp 去取也满足它**，于是 registry 的 fallback 链变了（或这个字段
+         * 改名 ⇒ 恒为 null），F1 仍然全绿，而 workflow 与本文件头那句
+         * 「验到了 yt-dlp 那一段」从那天起是假话。
+         *
+         * ⚠️ 这**是**一个判决变更，而且是有意的：链变了必须当场有人知道。
+         *    改产品取回顺序时**先改这里的期望、再改文档**，别删掉这一格。
          */
         const fetcher = classifyFetcher({ probeAdapter, hits: fixtureHits });
-        if (fetcher.kind === 'none') {
-          fail('F1', checkFixtureWasFetched({ hits: fixtureHits }).reason);
-        } else if (fetcher.kind === 'ytdlp') {
+        say(
+          `   ⓘ 取回方分档：kind=${fetcher.kind}  adapterId=${fetcher.adapterId ?? '(没给)'}  命中 ${fetcher.hits} 次`,
+        );
+        const fetchedBy = checkFetchedByYtdlp({ probeAdapter, hits: fixtureHits });
+        if (!fetchedBy.ok) {
+          fail('F1', fetchedBy.reason);
+        } else {
           say(`   ✔ 产品报告 adapterId=yt-dlp，且 fixture 真的被取了 ${fixtureHits.length} 次`);
           say('     —— F1 走的确实是站点解析器那一支（registry fallback 链按设计生效）。');
           say('     ⚠️ UA 全是 Chrome：yt-dlp 默认伪装浏览器且轮换版本号，**UA 不能用来认它**。');
-        } else {
-          say(
-            `   ⓘ 产品报告的解析者是 ${probeAdapter ?? '(没给)'}，不是 yt-dlp —— 见上面 UA 与 probe 原文。`,
-          );
         }
         // 顺带记一笔：yt-dlp 对直链是不是原样存盘（观测，不作判据）。
         say(`   ⓘ 喂进去的 fixture sha256=${served.sha}（${servedBuf.length} B）`);
@@ -1529,8 +1643,12 @@ try {
            * sha256 传 null：yt-dlp 对直链一般是原样存盘，但 `-f bestaudio/best`
            * 在某些情况下会让它重新封装。**不拿一个可能变化的东西当判据** ——
            * 这里验的是"能不能播"，不是"字节有没有变"。实际 sha 照样打出来。
+           *
+           * ⚠️ `expectContentType` 同理传 null：yt-dlp 换容器时扩展名事先不知道，
+           *    凭空写一个期望值会把"没验到"变成一条恒红的断言。
+           *    「Content-Type 头必须在」那一格对这条路照样生效。
            */
-          const ok = await assertPlayable('F1', imp.body.noteUid, null, null);
+          const ok = await assertPlayable('F1', imp.body.noteUid, null, null, null);
           results.push({
             name: 'F1 链接导入',
             what: 'yt-dlp 取回',
@@ -1618,11 +1736,36 @@ try {
   if (fixtureServer) await new Promise((r) => fixtureServer.close(r));
   await stopDaemon();
   hdr('结论');
+  /*
+   * ★ 未决单独喊一遍，**在判决之前** —— 与 `skippedOnPurpose` 同一条道理
+   *   （PROTOCOL §11：跳过不许渲染成成功）。一条"没验到"混在满屏绿里
+   *   等于没有，而这一节的存在正是为了让它混不进去。
+   */
+  if (undecideds.length > 0) {
+    say(`   ? ${undecideds.length} 处**未决**（跑了，但什么都没证明 —— 既不是通过也不是失败）：`);
+    for (const u of undecideds) say(`     ? [${u.step}] ${u.detail}`);
+    say('     （它们会随凭证一起报出去：`undecided` 那一栏。`null`=没上报，`0`=查过了确实没有。）');
+    say('');
+  }
+  /*
+   * ⚠️ 落盘**无条件**（不看红绿）：`if: ${{ !cancelled() }}` 那条上传步骤要的就是
+   *   "红跑也有这份文件"。只在绿跑写等于把「这一轮有几条没验到」这个信息，
+   *   恰好在最需要它的那一次丢掉。
+   */
+  if (UNDECIDED_OUT) {
+    writeFileSync(UNDECIDED_OUT, `${JSON.stringify({ unknowns: undecideds.length }, null, 2)}\n`);
+    say(`   覆盖面已写到 ${UNDECIDED_OUT}（unknowns=${undecideds.length}）`);
+  }
   if (failures.length === 0) {
     if (skippedOnPurpose.length > 0) {
       say('   ✔ 已执行的用例全部通过，但**本轮不是全量**：');
       for (const t of skippedOnPurpose) say(`     ⊘ 跳过：${t}`);
       say('     （PROTOCOL §11：跳过不许渲染成成功 —— 这盏绿灯只覆盖上面跑过的那些。）');
+    } else if (undecideds.length > 0) {
+      say(
+        `   ✔ 已执行的用例全部通过，但**有 ${undecideds.length} 处未决** ——` +
+          '这盏绿灯不覆盖它们（见上面那一节）。',
+      );
     } else {
       say('   ✔ 全部通过。');
     }

@@ -1186,3 +1186,50 @@ root 挂不上去（同上），所以两个方向的话都写进了**前置**�
 **在那里红不能归因于 master，在那里绿也不能证明 master 绿**。
 所以基线 1600 标 `[未验证]`，不假称量过。
 （这条腿自己就该是第一个遵守它的。）
+
+---
+
+## 2026-09-06 · 抽判据时抓到的四条空转，**全修了**（Manager 裁决）
+
+#98 把这条腿从「结构上不可测」变成可测时，抓到四条「把修法抽掉它也不红」，
+当时一条都没改、各留一个会说话的桩。裁决是**四条全修**，理由逐字：
+它们**每一条都正好是「判据和它声称守的东西对不上」**。
+
+| # | 空转 | 修成什么样 |
+|---|---|---|
+| ① | `media.ready` 收不到 ⇒ 只 `say` 不 `fail`，`ok` 保持 true ⇒ 总表「✔ 通过」 | **第三态**（不是 `fail` —— 收不到可能是真未决）：进 `undecideds`、进 `--undecided-out` 计数、总表那行改 ⊘ |
+| ② | `adapterId` 被测量、被打印，**从来不进判决** | `checkFetchedByYtdlp()`：断**哪个适配器**，不是"有没有人来取"（DirectHttp 去取也让 `fixtureHits` 涨） |
+| ③ | `ffmpeg 不在 storeRoot` —— (a) 结构上不可能红 + (b) 真响起来那天说假话 | (b) `isUnderRoot()` 照 `isWithinImportRoots` 原修法；(a) 判据改吃 **realpath 之后**的路径 |
+| ④ | 文档列的七格里，Content-Type 与 `416 + Content-Range` **只在注释里存在** | 两格都补上。⚠️ 产品两处**都做对了**（`media.ts` 逐字发了），是守卫没在看 |
+
+`--undecided` 从写死改成真管道（六条腿现在都在这条管道上）。
+
+### 🔴 待办：**这一轮的修法一次都没在真 runner 上跑过**
+
+这条腿要预编译包 + 真装几百 MB 后端 + 真跑 5～6 次转写，本地跑不了，
+而它只在 `schedule` 与 `workflow_dispatch` 时跑。
+
+⇒ **下一次 `workflow_dispatch`（钉 `bundleRunId`）时重点看三件事**：
+
+1. **②** `adapterId` 是不是真的稳定回 `yt-dlp`。这一轮把它接进了判决 ——
+   如果 registry 的 fallback 链在某个平台上落到别处，F1 会**当场红**。
+   那正是设计（链变了必须有人知道），但第一次跑要有人在场判断
+   「是链真的变了」还是「我把期望写窄了」。
+2. **④** 四种容器的 `Content-Type` 是不是逐字等于扩展名判出来的那个。
+   `[CI 实测 run 31247374404]` 说三平台 × 四容器全部正确，但那是**在这一格被补上之前**
+   量的；现在它是判据，第一次跑才算真的验过。
+3. **①** `media.ready` 在三个平台上到底收不收得到。凭证里的 `undecided`
+   从今天起是个**真数**：它不是 0 的话，说明那条 SSE 在某台 runner 上没按时到。
+
+⚠️ **在那之前，本轮的判决只覆盖到「纯函数判据 + 接线」这一层**
+（`selftest-e2e-import.mjs` 207 条、`leg-coverage --leg import` 17/20）。
+端到端那一层是 `[未验证]`，别当成验过了。
+
+### 核过、**不立条目**的一条
+
+`hasVideo` 是不是"没有真实生产者的契约字段"（裁决里问的那句）—— **有真生产者**：
+`apps/daemon/src/jobs/runners/transcribe.ts` 的 `hasVideo: result.media.audioOnly === false`，
+而 `audioOnly` 来自适配器**实际探到**的流信息
+（`localFile.ts` / `directHttp.ts` 里 `probed.streams.every((s) => s.type !== 'video')`，走 ffprobe）。
+它**曾经**是写死的 `false`，后来被改成真值 —— 而那次改动没被判成"零读者可以删"，
+靠的就是本腿这一格。⇒ 产品侧没有欠账，不立条目。
