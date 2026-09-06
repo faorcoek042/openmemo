@@ -69,8 +69,9 @@
  * 跑：`node scripts/ci/check-duplicate-declarations.mjs`
  *     `--update` 把当前全部重复写回基线（**只在人核过之后用**）。
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { prepare, REPO, sourceFiles, stripCommentsOnly } from '../lib/ts-lexer.mjs';
 
@@ -381,7 +382,44 @@ export function collect(bodies) {
 
 /* ══════════════════════════════ CLI ══════════════════════════════ */
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * 「这个模块是被**直接执行**的吗？」
+ *
+ * ⚠️ 这里原来是 `import.meta.url === \`file://${process.argv[1]}\`` —— **手拼 URL**。
+ * 那是 T-143 ③ 在 `apps/daemon/src/main.ts` 修过的**同一个坑，第三次**
+ * （第二次是 T-145 的 `scripts/selfcheck.mjs`）。判据与逐条实测在
+ * `apps/daemon/src/bootstrap/entrypoint.ts` 的文件头，那里的 `isDirectRun()`
+ * 是本仓库的权威实现，这几行是它的等价物（`scripts/*.mjs` 没法 import 那个 TS 模块）。
+ *
+ * 它两种形态都会静默失配，而**失配的后果不是报错，是这道门整个变成空转**：
+ * CLI 主体一行不执行 → stdout 零行 → **exit 0** → CI 记 ✔。
+ *
+ *   ① 手拼 ≠ 转换：路径要百分号编码，URL 才要。装在 `my dir` / `笔记` / `a#b` 下就失配。
+ *   ② `import.meta.url` 是 **realpath 过**的，`argv[1]` 是用户敲的那个。
+ *      macOS 的 `TMPDIR` 在 `/var/folders/…`，而 `/var` 是通往 `/private/var` 的软链 ——
+ *      所以在 macOS 上从临时目录跑这个脚本，光换 `pathToFileURL` 也**还是**失配。
+ *
+ * ①在 Windows 上把它整个关掉了（`D:\a\…` 拼不出 `file:///D:/a/…`），
+ * ②在 macOS 上把自检里那几条从临时目录起的副本整个关掉了 —— 两边症状不同、根同一个。
+ * `§7 入口守卫` 那三条腿现在把这两种形态都钉住了，而且**在 Linux 上就会红**。
+ */
+function isDirectRun(moduleUrl, argv1) {
+  if (!argv1) return false;
+  try {
+    if (moduleUrl === pathToFileURL(argv1).href) return true;
+  } catch {
+    return false;
+  }
+  // argv[1] 可能是一条软链（或 macOS 的 /var、Windows 的 8.3 短名），
+  // 而 import.meta.url 已经是解析后的真路径 —— 所以还要再比一次 realpath。
+  try {
+    return moduleUrl === pathToFileURL(realpathSync(argv1)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectRun(import.meta.url, process.argv[1])) {
   const baseline = JSON.parse(readFileSync(BASELINE_PATH, 'utf8'));
   const files = sourceFiles();
   const bodies = new Map(files.map((f) => [f, readFileSync(join(REPO, f), 'utf8')]));
