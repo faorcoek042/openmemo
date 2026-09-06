@@ -20,7 +20,9 @@
  * （`e2e-runtime-assertions.mjs` + `selftest-e2e-runtime.mjs`）。
  *
  * browser 腿（`e2e-browser-assertions.mjs`）、record 腿（`e2e-record-assertions.mjs`）
- * 已经照做。**notes 是最后一条没有判据模块、也没有自检的腿。**
+ * 已经照做。notes 是倒数第二条 —— **最后一条是 import**
+ * （`e2e-import-assertions.mjs` + `selftest-e2e-import.mjs`）。
+ * ⚠️ 这里原来写着「notes 是最后一条」，那句话在写下的当天为真、现在不是了。
  *
  * ## 这里的每个函数都满足四条
  *
