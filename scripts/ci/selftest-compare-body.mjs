@@ -59,7 +59,11 @@ const is = (name, got, want) => {
 };
 /** 判红之外还要判**红得对不对** —— 一条指错方向的红会把下一个人送去修没坏的东西。 */
 const saysSomethingAbout = (name, problems, needle) =>
-  is(name, problems.some((p) => p.includes(needle)), true);
+  is(
+    name,
+    problems.some((p) => p.includes(needle)),
+    true,
+  );
 
 const DARWIN = 'openmemo-0.7.6-darwin-arm64.tar.gz';
 const LINUX = 'openmemo-0.7.6-linux-x64.tar.xz';
@@ -101,11 +105,7 @@ const bodyWith = (lines) =>
     '上传后 CI **不带任何凭证、从上面这些公开地址重新下载了一遍**，逐字符复核过 sha256。',
   ].join('\r\n');
 
-const GOOD_LINES = [
-  `${SHA[DARWIN]}  ${DARWIN}`,
-  `${SHA[LINUX]}  ${LINUX}`,
-  `${SHA[WIN]}  ${WIN}`,
-];
+const GOOD_LINES = [`${SHA[DARWIN]}  ${DARWIN}`, `${SHA[LINUX]}  ${LINUX}`, `${SHA[WIN]}  ${WIN}`];
 
 console.log('\n阴性对照：一份**没有动过**的正文 —— 它必须是绿的');
 {
@@ -114,7 +114,11 @@ console.log('\n阴性对照：一份**没有动过**的正文 —— 它必须�
   is('阴性对照：正文那侧解析出 3 行', v.bodyCount, 3);
   is('阴性对照：CI 那侧解析出 3 行', v.ciCount, 3);
   // 围栏外那串 commit sha 与表格里的文件名**没有**被算成校验和声明。
-  is('围栏外的十六进制不算数（否则会造出一堆假红）', parseBodyChecksums(bodyWith(GOOD_LINES)).size, 3);
+  is(
+    '围栏外的十六进制不算数（否则会造出一堆假红）',
+    parseBodyChecksums(bodyWith(GOOD_LINES)).size,
+    3,
+  );
 }
 
 console.log('\nA 组：5 条反向用例 —— 每一条都必须红，而且要红得指对地方');
@@ -136,7 +140,11 @@ console.log('\nA 组：5 条反向用例 —— 每一条都必须红，而且�
 {
   const v = judgeBodyVsCi({ bodyText: '', sumsText: SUMS });
   is('A2 ★ 空正文 ⇒ 红', v.ok, false);
-  saysSomethingAbout('A2 报错说的是「正文里一条都没解析出来」', v.problems, '发布页正文里一条 sha256 都没解析出来');
+  saysSomethingAbout(
+    'A2 报错说的是「正文里一条都没解析出来」',
+    v.problems,
+    '发布页正文里一条 sha256 都没解析出来',
+  );
 }
 
 // ── A3 删掉一行（三个平台只抄了两个）─────────────────────────────────────────
@@ -170,7 +178,11 @@ console.log('\nA 组：5 条反向用例 —— 每一条都必须红，而且�
 {
   const v = judgeBodyVsCi({ bodyText: bodyWith(GOOD_LINES), sumsText: '' });
   is('A5 ★ CI 侧 SHA256SUMS 为空 ⇒ 红（不许在空集上报绿）', v.ok, false);
-  saysSomethingAbout('A5 报错说的是「CI 的 SHA256SUMS 里一条都没解析出来」', v.problems, 'CI 的 SHA256SUMS 里一条都没解析出来');
+  saysSomethingAbout(
+    'A5 报错说的是「CI 的 SHA256SUMS 里一条都没解析出来」',
+    v.problems,
+    'CI 的 SHA256SUMS 里一条都没解析出来',
+  );
   is('A5 CI 那侧确实解析出 0 行', v.ciCount, 0);
 }
 
@@ -201,26 +213,38 @@ is('B1  完整版在同一份输入上仍然红', judgeBodyVsCi({ bodyText: '', 
 // ── B2 / B3 ⚠️ 如实记下：A5 与 A2 **不是**靠地板抓到的 ───────────────────────
 {
   const ciEmpty = judgeBodyVsCi({ bodyText: bodyWith(GOOD_LINES), sumsText: '' });
-  is('B2 退化版在「CI 侧空、正文 3 行」上**也红**（不是地板的功劳）', ablated(bodyWith(GOOD_LINES), ''), false);
-  saysSomethingAbout('B2 真正接住它的是反方向那条「正文里多出一行」', ciEmpty.problems, '发布页正文里多出一行');
+  is(
+    'B2 退化版在「CI 侧空、正文 3 行」上**也红**（不是地板的功劳）',
+    ablated(bodyWith(GOOD_LINES), ''),
+    false,
+  );
+  saysSomethingAbout(
+    'B2 真正接住它的是反方向那条「正文里多出一行」',
+    ciEmpty.problems,
+    '发布页正文里多出一行',
+  );
 
   const bodyEmpty = judgeBodyVsCi({ bodyText: '', sumsText: SUMS });
   is('B3 退化版在「正文空、CI 侧 3 行」上**也红**（不是地板的功劳）', ablated('', SUMS), false);
-  saysSomethingAbout('B3 真正接住它的是正方向那条「正文里没有这一行」', bodyEmpty.problems, '这一行（CI 有）');
+  saysSomethingAbout(
+    'B3 真正接住它的是正方向那条「正文里没有这一行」',
+    bodyEmpty.problems,
+    '这一行（CI 有）',
+  );
 }
 
 // ── B4 反过来：地板也不该把逐格比对的功劳抢走 ────────────────────────────────
-is('B4 退化版在 A1（改一位）上仍然红（说明 A1 不是靠地板抓到的）', ablated(bodyWith([GOOD_LINES[0], `${SHA[LINUX].slice(0, -1)}b  ${LINUX}`, GOOD_LINES[2]]), SUMS), false);
+is(
+  'B4 退化版在 A1（改一位）上仍然红（说明 A1 不是靠地板抓到的）',
+  ablated(bodyWith([GOOD_LINES[0], `${SHA[LINUX].slice(0, -1)}b  ${LINUX}`, GOOD_LINES[2]]), SUMS),
+  false,
+);
 
 console.log('\nC 组：解析器的形状 —— 只在"少查一条"那一侧近似');
 {
   // 大写十六进制 / 单空格：是排版差异，不是哈希错了。判红会把人送去查没坏的东西。
   const v = judgeBodyVsCi({
-    bodyText: bodyWith([
-      `${SHA[DARWIN].toUpperCase()} ${DARWIN}`,
-      GOOD_LINES[1],
-      GOOD_LINES[2],
-    ]),
+    bodyText: bodyWith([`${SHA[DARWIN].toUpperCase()} ${DARWIN}`, GOOD_LINES[1], GOOD_LINES[2]]),
     sumsText: SUMS,
   });
   is('C1 大写 + 单空格 ⇒ 仍判一致', v.ok, true);
@@ -231,7 +255,11 @@ console.log('\nC 组：解析器的形状 —— 只在"少查一条"那一侧�
     sumsText: SUMS,
   });
   is('C2 ★ 少一个字符（63 位）⇒ 红', short.ok, false);
-  saysSomethingAbout('C2 报错点名 darwin 那一行', short.problems, `发布页正文里没有 ${DARWIN} 这一行`);
+  saysSomethingAbout(
+    'C2 报错点名 darwin 那一行',
+    short.problems,
+    `发布页正文里没有 ${DARWIN} 这一行`,
+  );
   // 正文里印了一个 CI 没产出的文件名（抄了上一版那一行）。
   const stale = judgeBodyVsCi({
     bodyText: bodyWith([...GOOD_LINES, `${SHA[WIN]}  openmemo-0.7.5-win-x64.zip`]),

@@ -160,7 +160,9 @@ function main(argv) {
   const bodyPath = arg('--body');
   const sumsPath = arg('--sums');
   if (!bodyPath || !sumsPath) {
-    console.error('用法: node scripts/ci/compare-body-vs-ci.mjs --body <正文文件> --sums <SHA256SUMS>');
+    console.error(
+      '用法: node scripts/ci/compare-body-vs-ci.mjs --body <正文文件> --sums <SHA256SUMS>',
+    );
     return 2;
   }
 
@@ -173,16 +175,16 @@ function main(argv) {
     `── 机器比对：发布页正文 ${verdict.bodyCount} 行 ⟷ CI SHA256SUMS ${verdict.ciCount} 行`,
   );
   for (const r of verdict.rows) {
-    console.log(`   ${r.same ? '✔' : '✘'} ${r.name}  ${r.same ? r.ci : `页面=${r.page} CI=${r.ci}`}`);
+    console.log(
+      `   ${r.same ? '✔' : '✘'} ${r.name}  ${r.same ? r.ci : `页面=${r.page} CI=${r.ci}`}`,
+    );
   }
   if (!verdict.ok) {
     console.error(`\n✘ 比对失败，${verdict.problems.length} 条：`);
     for (const p of verdict.problems) console.error(`   · ${p}`);
     return 1;
   }
-  console.log(
-    `\n✔ ${verdict.ciCount} 个资产的 sha256 在发布页正文与 CI SHA256SUMS 上逐字符一致。`,
-  );
+  console.log(`\n✔ ${verdict.ciCount} 个资产的 sha256 在发布页正文与 CI SHA256SUMS 上逐字符一致。`);
   return 0;
 }
 
