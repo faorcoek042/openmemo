@@ -69,6 +69,64 @@ import {
   launcherName,
   assertPortFree,
 } from './launcher-spawn.mjs';
+/*
+ * ★★ 判据本体在 `e2e-import-assertions.mjs` —— **纯函数，能被喂输入**。
+ *
+ * 抽出来之前它们是这份文件里 37 处内联 `fail()`（59 个判决点），而这份文件顶层执行、
+ * 结尾 `process.exit()` ⇒ **import 不进来 ⇒ 没有任何东西能给它们喂一份"本该判红"
+ * 的输入**。`e2e-runtime-audit.mjs` 正是这样让一条判据烂了三周
+ * （`/先安装 CPU/` 那条正则，文案一改它就再也没匹配过任何东西）。
+ *
+ * 现在每一条都在 `selftest-e2e-import.mjs` 里过「坏输入必须判红 + 好输入必须判绿」，
+ * 逐格覆盖由 `leg-coverage.mjs --leg import` 现算。
+ *
+ * ⚠️ 这一轮**只搬家，不改判什么**。抽出过程中发现的四条空转已登记在判据模块的注释里
+ * （`checkHasVideoContract` / `checkToolUnderStoreRoot` / `classifyFetcher` /
+ *   `checkFullFetch` + `checkUnsatisfiableRange`），判据一条都没动。
+ *
+ * ⚠️ 两个组合子：`all` 短路、`collect` 收集。本腿是「收集所有失败最后摊开」的，
+ *    所以平行的那几格必须走 `collect`，调用方一律 `for (const r of v.reasons) fail(…)`。
+ */
+import {
+  ASSET_ROLES,
+  TOOL_CHECK_PREFIX,
+  buildMultipart,
+  checkAnyFixtureBuilt,
+  checkAsrModelPicked,
+  checkAudio16kFetched,
+  checkAudio16kPresent,
+  checkDaemonDataDir,
+  checkDaemonPidIdentity,
+  checkFixtureBuilt,
+  checkFixtureHostLoopback,
+  checkFixtureWasFetched,
+  checkFullFetch,
+  checkH264EncoderAvailable,
+  checkHasVideoContract,
+  checkImportAccepted,
+  checkJobSucceeded,
+  checkNoteFetched,
+  checkNothingBorrowed,
+  checkOriginalAssetReady,
+  checkPrefixRange,
+  checkRequiredPacksInstalled,
+  checkShaRoundTrip,
+  checkSuffixRange,
+  checkToolUnderStoreRoot,
+  checkUnsatisfiableRange,
+  checkUploadQueued,
+  classifyFetcher,
+  classifyInstallAttempt,
+  classifyJobPoll,
+  classifyToolChecks,
+  flattenModelCatalog,
+  missingFixtureKinds,
+  parseFixtureRange,
+  pickH264Encoder,
+  pickSmallestWhisperAsr,
+  pickVadModels,
+  verdictMark,
+} from './e2e-import-assertions.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const argv = process.argv.slice(2);
@@ -308,8 +366,13 @@ async function startDaemon(label) {
            *   别的 daemon 不可能报出同一个 —— 在 Windows 上这就是身份证明本身，
            *   §11 要的"绿灯能追溯到我这次启动的东西"由它承担。
            */
-          const canComparePid = !IS_WIN || !viaLauncher;
-          if (canComparePid && body?.pid !== undefined && body.pid !== proc.pid) {
+          const pidVerdict = checkDaemonPidIdentity({
+            isWindows: IS_WIN,
+            viaLauncher,
+            bodyPid: body?.pid,
+            spawnPid: proc.pid,
+          });
+          if (!pidVerdict.ok) {
             say(`   [${label}] ✘ 端口 ${PORT} 上应答的不是我起的那个 daemon。`);
             say(`      我 spawn 的 pid=${proc.pid}，应答方 pid=${body.pid}`);
             say(`      应答方 dataDir=${body.dataDir}`);
@@ -317,7 +380,7 @@ async function startDaemon(label) {
             say('      → 换个 --port，或先收拾掉那个进程。**绝不用 pkill -f**（PROTOCOL）。');
             throw new Error(`port ${PORT} occupied by a foreign daemon (pid=${body.pid})`);
           }
-          if (body?.dataDir !== undefined && body.dataDir !== DATA_DIR) {
+          if (!checkDaemonDataDir({ bodyDataDir: body?.dataDir, wantDataDir: DATA_DIR }).ok) {
             say(`   [${label}] ✘ 应答方的 dataDir 不是本次这个：${body.dataDir} ≠ ${DATA_DIR}`);
             throw new Error('daemon answered with a different dataDir');
           }
@@ -420,29 +483,14 @@ async function waitForJob(jobId, timeoutSec = 1800) {
   for (let i = 0; i < timeoutSec; i++) {
     await new Promise((r) => setTimeout(r, 1000));
     const jr = await j(`/api/jobs/${encodeURIComponent(jobId)}`);
-    if (jr.status !== 200) return { state: 'error', text: `轮询得到 HTTP ${jr.status}` };
-    const job = jr.body?.job ?? jr.body;
-    const gotId = job?.jobId ?? job?.uid ?? job?.id;
-    if (!job || gotId !== jobId) {
-      return {
-        state: 'error',
-        text: `端点返回的不是这个 job（要 ${jobId}，拿到 ${gotId}；keys=${JSON.stringify(Object.keys(job ?? {})).slice(0, 200)}）`,
-      };
-    }
-    if (['succeeded', 'failed', 'cancelled'].includes(job.state)) {
-      return {
-        state: job.state,
-        text: `${job.state}${job.error ? ` — ${JSON.stringify(job.error).slice(0, 400)}` : ''}`,
-        job,
-      };
-    }
     /*
-     * `blocked` 不是终态，但它**永远不会自己好** —— 缺 ASR 模型/缺工具时 job 就停在这。
-     * 一直轮询到超时的话，日志里只有一句 TIMEOUT，看不出是缺东西。当场说清楚。
+     * 分类是纯的（`classifyJobPoll`），等待与超时留在这里 ——
+     * 「拿到的 job 不是我要的那个」那一格尤其值钱：`jobId` 这个字段名被写错过三次
+     * （`cold-start-audit.mjs` 记着全过程），而回退到"随便哪个 job"会让整条腿
+     * 读到别人的成功。它现在有一个坏输入在 `selftest-e2e-import.mjs` 里钉着。
      */
-    if (job.state === 'blocked') {
-      return { state: 'blocked', text: `blocked（blockedCode=${job.blockedCode ?? 'null'}）`, job };
-    }
+    const v = classifyJobPoll({ status: jr.status, body: jr.body, jobId });
+    if (v.done) return { state: v.state, text: v.text, job: v.job };
   }
   return { state: 'timeout', text: `TIMEOUT（${timeoutSec}s 内没到终态）` };
 }
@@ -555,8 +603,14 @@ try {
       }
       const st = await waitForJob(jobId);
       const secs = ((Date.now() - t0) / 1000).toFixed(1);
-      if (st.state === 'succeeded' || attempt === 2) return `${st.text}  (${secs}s)`;
-      if (st.job?.error?.retryable !== true) return `${st.text}  (${secs}s)  [不可重试]`;
+      const decision = classifyInstallAttempt({
+        state: st.state,
+        job: st.job,
+        attempt,
+        maxAttempts: 2,
+      });
+      if (decision === 'done') return `${st.text}  (${secs}s)`;
+      if (decision === 'not-retryable') return `${st.text}  (${secs}s)  [不可重试]`;
       say(`   ${String(id).padEnd(32)} ${st.text}  (${secs}s)  → 产品标了 retryable，重试一次`);
     }
     return 'unreachable';
@@ -588,21 +642,12 @@ try {
    * 这正是本仓反复栽的那个形状：**失败发生的地方与失败显形的地方隔得太远**。
    * 所以在这里立一道闸：缺哪个就说哪个，并说明它会以什么面目在后面爆炸。
    */
-  const REQUIRED_PACK_PREFIXES = [
-    { prefix: 'media-tools-', why: 'ffmpeg/ffprobe —— 造样本、抽音轨、归一化全靠它' },
-    {
-      prefix: 'whispercpp-',
-      why: 'whisper-cli/whisper-vad —— 没有它转写必失败，而资产要转写成功才落库',
-    },
-    { prefix: 'ytdlp-', why: 'yt-dlp —— F1 链接导入的取回方' },
-  ];
-  const missingRequired = REQUIRED_PACK_PREFIXES.filter(
-    (r) => ![...installedIds].some((id) => String(id).startsWith(r.prefix)),
-  );
-  for (const m of missingRequired) {
-    fail('3.后端包', `必需的 ${m.prefix}* 没装上 —— ${m.why}`);
-  }
-  if (missingRequired.length > 0) {
+  // 清单与判据都在 `e2e-import-assertions.mjs`（`REQUIRED_PACK_PREFIXES`）——
+  // 它是**三条平行的** `fail()`，所以走 `collect`：三个全没装上时要看得见三条，
+  // 那正是分辨"下载源整个不通"和"某一个包坏了"的依据。
+  const packVerdict = checkRequiredPacksInstalled({ installedIds });
+  for (const r of packVerdict.reasons) fail('3.后端包', r);
+  if (!packVerdict.ok) {
     say('');
     say('   ⚠️ 上面这些包没装上，后面的失败会以**别的面目**出现：');
     say('      产品找不到 whisper-cli 时会回退到 PATH，而 PATH 上是本脚本的屏蔽 shim，');
@@ -642,26 +687,18 @@ try {
    */
   const mcat = await j('/api/models/catalog');
   const groups = mcat.body?.groups ?? [];
-  const models = groups.flatMap((g) =>
-    (g.variants ?? []).map((v) => ({ ...v, role: v.role ?? g.role, tags: v.tags ?? g.tags ?? [] })),
-  );
+  const models = flattenModelCatalog(groups);
   say(`   /api/models/catalog：${groups.length} 组，展平后 ${models.length} 个条目`);
   if (models.length === 0) {
     say(
       `   ⚠️ 展平后是空的 —— 先怀疑 unwrap 写错了。top-level keys: ${JSON.stringify(Object.keys(mcat.body ?? {}))}`,
     );
   }
-  const sizeOf = (m) => (m.files ?? []).reduce((n, f) => n + (f.sizeBytes ?? 0), 0);
-  const pick = models.filter((m) => m.role === 'vad' && sizeOf(m) <= 250 * 1024 * 1024);
-  const forWhisper = (m) =>
-    (m.engines ?? []).includes('whisper.cpp') || /^asr\/whisper-/.test(String(m.id ?? ''));
-  const asr = models
-    .filter((m) => m.role === 'asr' && forWhisper(m))
-    .map((m) => ({ m, bytes: sizeOf(m) }))
-    .filter((x) => x.bytes > 0)
-    .sort((a, b) => a.bytes - b.bytes)[0];
-  if (!asr) {
-    fail('4.模型', '目录里挑不出任何 whisper.cpp 能加载的 asr 模型 —— 先怀疑 unwrap，再怀疑目录');
+  const pick = pickVadModels(models);
+  const asr = pickSmallestWhisperAsr(models);
+  const asrVerdict = checkAsrModelPicked({ asr });
+  if (!asrVerdict.ok) {
+    fail('4.模型', asrVerdict.reason);
     for (const m of models.filter((x) => x.role === 'asr').slice(0, 8)) {
       say(`      （role=asr 的有：${m.id} engines=${JSON.stringify(m.engines ?? null)}）`);
     }
@@ -728,10 +765,20 @@ try {
   say(`   storeRoot: ${STORE_ROOT}`);
   say(`   ffmpeg   : ${PRODUCT_FFMPEG ?? '(没找到)'}`);
   say(`   yt-dlp   : ${PRODUCT_YTDLP ?? '(没找到)'}`);
-  if (!PRODUCT_FFMPEG) {
-    fail('6.ffmpeg', `storeRoot 里找不到 ffmpeg —— 后面造不出样本。storeRoot=${STORE_ROOT}`);
-  } else if (!PRODUCT_FFMPEG.startsWith(STORE_ROOT)) {
-    fail('6.ffmpeg', `找到的 ffmpeg 不在 storeRoot 底下（${PRODUCT_FFMPEG}）—— 这就是"借宿主的"`);
+  /*
+   * ⚠️ 判据里那两格中的**第二格今天不可能红**（`findUnder` 在结构上只会返回
+   *    storeRoot 底下的路径），而且它真的响起来的那天说的是假话。
+   *    已登记，见 `checkToolUnderStoreRoot()` 的注释与 `selftest-e2e-import.mjs` ⑤-b。
+   *    **本轮不改判据**，只是让它可以被喂输入。
+   */
+  const ffVerdict = checkToolUnderStoreRoot({
+    found: PRODUCT_FFMPEG,
+    storeRoot: STORE_ROOT,
+    name: 'ffmpeg',
+    whyNeeded: '后面造不出样本',
+  });
+  if (!ffVerdict.ok) {
+    fail('6.ffmpeg', ffVerdict.reason);
   } else {
     say('   ✔ ffmpeg 在 storeRoot 底下 = 产品自己下载并校验的那一份。');
   }
@@ -781,10 +828,8 @@ try {
   async function detectH264Encoder() {
     if (!PRODUCT_FFMPEG) return null;
     const probe = await runSync(PRODUCT_FFMPEG, ['-hide_banner', '-encoders']);
-    const listed = probe.out + probe.err;
-    if (/\blibx264\b/.test(listed)) return 'libx264';
-    if (/\blibopenh264\b/.test(listed)) return 'libopenh264';
-    return null;
+    // 正则本身在 `pickH264Encoder()` 里，那边有「只有 libx264rgb 时不许挑中 libx264」等用例。
+    return pickH264Encoder(probe.out + probe.err);
   }
   const H264_ENCODER = await detectH264Encoder();
   say(`   H.264 编码器（探测，不是写死）: ${H264_ENCODER ?? '(两者都不在——造不出带视频的样本)'}`);
@@ -845,7 +890,7 @@ try {
       what: `H.264(${H264_ENCODER})+AAC / MP4 / **带视频**`,
     });
   } else {
-    fail('7.样本', `PRODUCT_FFMPEG 既没有 libx264 也没有 libopenh264 —— 造不出带视频的样本`);
+    fail('7.样本', checkH264EncoderAvailable({ encoder: H264_ENCODER }).reason);
   }
 
   const fixtures = [];
@@ -853,8 +898,14 @@ try {
     for (const spec of FIXTURE_SPECS) {
       const out = join(FIXTURE_DIR, spec.name);
       const r = await runSync(PRODUCT_FFMPEG, spec.args(SAMPLE, out));
-      if (r.code !== 0 || !existsSync(out)) {
-        fail('7.样本', `造 ${spec.name} 失败（exit=${r.code}）：${r.err.slice(-800)}`);
+      const built = checkFixtureBuilt({
+        name: spec.name,
+        exitCode: r.code,
+        exists: existsSync(out),
+        stderr: r.err,
+      });
+      if (!built.ok) {
+        fail('7.样本', built.reason);
         continue;
       }
       const buf = readFileSync(out);
@@ -869,21 +920,10 @@ try {
       say(`      sha256=${sha256(buf)}  magic=${buf.subarray(0, 12).toString('hex')}`);
     }
   }
-  if (fixtures.length === 0) fail('7.样本', '一个样本都没造出来 —— F2 无从谈起');
-
-  /**
-   * ★ F2/F2b 总表补行用的完整期望名单（Manager 2026-08-11 裁决，#77 F2b 追踪）：
-   * 独立于 FIXTURE_SPECS —— 后者在这台机器没有 H.264 编码器时**压根不包含**
-   * `f2-video.mp4`（见上面 `if (H264_ENCODER)`），如果补行只按 FIXTURE_SPECS
-   * 算"缺了谁"，"没编码器"这种缺法会跟"造样本失败"一样在总表里悄悄消失——
-   * 同一个陷阱换了个触发路径，等于只堵了一半。这份名单就是为了不留这半个缺口。
-   */
-  const ALL_FIXTURE_KINDS = [
-    { name: 'f2-audio.wav', what: 'PCM / WAV / 仅音轨' },
-    { name: 'f2-audio.mp3', what: 'MP3 / MPEG / 仅音轨' },
-    { name: 'f2-audio.m4a', what: 'AAC / MP4 / 仅音轨' },
-    { name: 'f2-video.mp4', what: 'H.264+AAC / MP4 / 带视频' },
-  ];
+  {
+    const v = checkAnyFixtureBuilt({ count: fixtures.length });
+    if (!v.ok) fail('7.样本', v.reason);
+  }
 
   /* ═════════════════ 8. 播放断言（F1/F2 共用）═════════════════ */
 
@@ -906,28 +946,23 @@ try {
    */
   async function assertPlayable(tag, noteUid, expectSha, expectBytes) {
     const nd = await j(`/api/notes/${encodeURIComponent(noteUid)}`);
-    if (nd.status !== 200) {
-      fail(
-        tag,
-        `GET /api/notes/${noteUid} → HTTP ${nd.status}：${JSON.stringify(nd.body).slice(0, 400)}`,
-      );
+    const fetched = checkNoteFetched({ status: nd.status, body: nd.body, noteUid });
+    if (!fetched.ok) {
+      fail(tag, fetched.reason);
       return false;
     }
     const assets = nd.body?.assets ?? [];
     say(
       `   资产 ${assets.length} 个：${assets.map((a) => `${a.role}(${a.state},${a.bytes ?? '?'}B,${a.mime ?? 'mime=null'})`).join(' ')}`,
     );
-    const orig = assets.find((a) => a.role === 'original');
-    if (!orig) {
-      fail(tag, `没有 role='original' 的资产 —— 媒体没落库。note.status=${nd.body?.status}`);
-      return false;
-    }
-    if (orig.state !== 'ready') {
-      fail(tag, `role='original' 的 state=${orig.state}（不是 ready）`);
-      return false;
-    }
-    if (!orig.url) {
-      fail(tag, `role='original' 没有 url 字段 —— 网页拿不到播放地址`);
+    const orig = assets.find((a) => a.role === ASSET_ROLES.original);
+    /*
+     * 三格短路（`all`）：抽出前这里是三个各自 `return false` 的 `if` ——
+     * 资产不在的时候问它的 state 是没有意义的。
+     */
+    const origVerdict = checkOriginalAssetReady({ asset: orig, noteStatus: nd.body?.status });
+    if (!origVerdict.ok) {
+      fail(tag, origVerdict.reason);
       return false;
     }
 
@@ -941,32 +976,30 @@ try {
     say(
       `   GET ${orig.url} → ${full.status}  ${full.buf.length} B  Content-Type=${ctype}  Content-Length=${clen}  Accept-Ranges=${aranges}`,
     );
-    if (full.status !== 200) {
-      fail(
-        tag,
-        `整体 GET 期望 200，拿到 ${full.status}：${full.buf.subarray(0, 400).toString('utf8')}`,
-      );
-      ok = false;
-    }
-    if (full.buf.length === 0) {
-      fail(tag, `整体 GET 返回 0 字节 —— 有记录但没有可播放的内容`);
-      ok = false;
-    }
-    if (aranges !== 'bytes') {
-      fail(tag, `Accept-Ranges 期望 'bytes'，拿到 ${aranges} —— 播放器无法拖动进度条`);
-      ok = false;
-    }
-    if (clen !== null && Number(clen) !== full.buf.length) {
-      fail(tag, `Content-Length=${clen} 与实收 ${full.buf.length} 不符`);
+    /*
+     * 四格**平行**（`collect`）：抽出前是四个各自 `fail()` 的 `if`，一次跑完要能看到全部。
+     * ⚠️ `ctype` 只被上面那句 `say()` 打印，**从来没有被判过** —— 而本函数的文档写着
+     *    「Content-Type 对」。已登记（`selftest-e2e-import.mjs` ⑤-c），本轮不补。
+     */
+    for (const r of checkFullFetch({
+      status: full.status,
+      buf: full.buf,
+      contentLength: clen,
+      acceptRanges: aranges,
+    }).reasons) {
+      fail(tag, r);
       ok = false;
     }
     const gotSha = sha256(full.buf);
+    const shaVerdict = checkShaRoundTrip({
+      expectSha,
+      gotSha,
+      expectBytes,
+      gotBytes: full.buf.length,
+    });
     if (expectSha !== null) {
-      if (gotSha !== expectSha) {
-        fail(
-          tag,
-          `★ sha256 往返不符：导入 ${expectSha}（${expectBytes} B），/media 吐出 ${gotSha}（${full.buf.length} B）`,
-        );
+      if (!shaVerdict.ok) {
+        fail(tag, shaVerdict.reason);
         ok = false;
       } else {
         say(
@@ -986,16 +1019,15 @@ try {
     const r1 = await jbin(orig.url, { headers: { Range: `bytes=0-${N - 1}` } });
     const cr1 = r1.headers.get('content-range');
     say(`   Range bytes=0-${N - 1} → ${r1.status}  Content-Range=${cr1}  收到 ${r1.buf.length} B`);
-    if (r1.status !== 206) {
-      fail(tag, `前缀 Range 期望 206，拿到 ${r1.status} —— 播放器的分段请求会失败`);
-      ok = false;
-    }
-    if (cr1 !== `bytes 0-${N - 1}/${size}`) {
-      fail(tag, `Content-Range 期望 'bytes 0-${N - 1}/${size}'，拿到 '${cr1}'`);
-      ok = false;
-    }
-    if (r1.buf.length !== N || !r1.buf.equals(full.buf.subarray(0, N))) {
-      fail(tag, `前缀 Range 的字节与整体 GET 的前 ${N} 字节不同（收到 ${r1.buf.length} B）`);
+    for (const r of checkPrefixRange({
+      status: r1.status,
+      contentRange: cr1,
+      buf: r1.buf,
+      fullBuf: full.buf,
+      n: N,
+      size,
+    }).reasons) {
+      fail(tag, r);
       ok = false;
     }
 
@@ -1004,11 +1036,17 @@ try {
     say(
       `   Range bytes=-${N} → ${r2.status}  Content-Range=${r2.headers.get('content-range')}  收到 ${r2.buf.length} B`,
     );
-    if (r2.status !== 206) {
-      fail(tag, `后缀 Range 期望 206，拿到 ${r2.status}`);
-      ok = false;
-    } else if (!r2.buf.equals(full.buf.subarray(size - N))) {
-      fail(tag, `后缀 Range 的字节与文件尾 ${N} 字节不同`);
+    // 短路（`all`）：抽出前是 `if / else if` —— 状态码不对时 body 是一份错误信息，
+    // 拿它去比字节，比出来的"不同"是废话。
+    const sufVerdict = checkSuffixRange({
+      status: r2.status,
+      buf: r2.buf,
+      fullBuf: full.buf,
+      n: N,
+      size,
+    });
+    if (!sufVerdict.ok) {
+      fail(tag, sufVerdict.reason);
       ok = false;
     }
 
@@ -1017,23 +1055,28 @@ try {
     say(
       `   Range bytes=${size + 100}- → ${r3.status}  Content-Range=${r3.headers.get('content-range')}`,
     );
-    if (r3.status !== 416) {
-      fail(tag, `越界 Range 期望 416，拿到 ${r3.status}`);
+    // ⚠️ 只钉状态码 —— 文档里那句「+ Content-Range: bytes * /size」**没有被验**。
+    //    已登记（`selftest-e2e-import.mjs` ⑤-c），本轮不补。
+    const r3Verdict = checkUnsatisfiableRange({ status: r3.status });
+    if (!r3Verdict.ok) {
+      fail(tag, r3Verdict.reason);
       ok = false;
     }
 
     // ⑦ audio16k
-    const a16 = assets.find((a) => a.role === 'audio16k');
-    if (!a16) {
-      fail(tag, `没有 role='audio16k' 的资产 —— 波形/时间轴联动（F5）没有素材`);
+    const a16 = assets.find((a) => a.role === ASSET_ROLES.audio16k);
+    const a16Present = checkAudio16kPresent({ asset: a16 });
+    if (!a16Present.ok) {
+      fail(tag, a16Present.reason);
       ok = false;
     } else {
       const ra = await jbin(a16.url);
       say(
         `   GET audio16k → ${ra.status}  ${ra.buf.length} B  Content-Type=${ra.headers.get('content-type')}`,
       );
-      if (ra.status !== 200 || ra.buf.length === 0) {
-        fail(tag, `audio16k 取不到（HTTP ${ra.status}，${ra.buf.length} B）`);
+      const a16Fetched = checkAudio16kFetched({ status: ra.status, buf: ra.buf });
+      if (!a16Fetched.ok) {
+        fail(tag, a16Fetched.reason);
         ok = false;
       }
     }
@@ -1059,32 +1102,16 @@ try {
   say('   浏览器读不到真实路径，所以"传路径"那条 API 网页根本用不上。');
   say('');
 
-  /** 手写 multipart/form-data —— 不引依赖，且这样才知道网页那一串字节到底长什么样。 */
-  function multipart(fileName, fileBuf, fields = {}) {
-    const boundary = `----OpenMemoE2E${Math.random().toString(36).slice(2)}`;
-    const parts = [];
-    for (const [k, v] of Object.entries(fields)) {
-      parts.push(
-        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`),
-      );
-    }
-    parts.push(
-      Buffer.from(
-        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\n` +
-          `Content-Type: application/octet-stream\r\n\r\n`,
-      ),
-      fileBuf,
-      Buffer.from(`\r\n--${boundary}--\r\n`),
-    );
-    return { body: Buffer.concat(parts), contentType: `multipart/form-data; boundary=${boundary}` };
-  }
+  // 手写 multipart 的那几行搬进了判据模块（`buildMultipart`）—— 它是判据的一部分，
+  // 不是工具函数：字段名 / CRLF / 结尾 boundary 的两个短横线写错任何一处，daemon 会 400，
+  // 而那会表现成**产品坏了**。自检里对着 `apps/web/src/features/capture/upload.ts` 正面核。
 
   const results = [];
   for (const fx of fixtures) {
     say('');
     say(`   ── ${fx.name}（${fx.what}）─────────────────────────────────`);
     const buf = readFileSync(fx.path);
-    const mp = multipart(fx.name, buf, { language: 'en' });
+    const mp = buildMultipart(fx.name, buf, { language: 'en' });
     const t0 = Date.now();
     const up = await j('/api/notes/upload', {
       method: 'POST',
@@ -1094,11 +1121,9 @@ try {
     say(
       `   POST /api/notes/upload (${buf.length} B) → HTTP ${up.status} ${JSON.stringify(up.body).slice(0, 300)}`,
     );
-    if (up.status !== 202 || !up.body?.noteUid || !up.body?.jobUid) {
-      fail(
-        `F2:${fx.name}`,
-        `上传没排上队：HTTP ${up.status} ${JSON.stringify(up.body).slice(0, 500)}`,
-      );
+    const queued = checkUploadQueued({ status: up.status, body: up.body });
+    if (!queued.ok) {
+      fail(`F2:${fx.name}`, queued.reason);
       results.push({ name: fx.name, what: fx.what, ok: false, note: '上传失败' });
       continue;
     }
@@ -1112,7 +1137,7 @@ try {
       }
       say('   ── daemon 最后 40 行 ──');
       say(tail(daemonLogs, 40));
-      fail(`F2:${fx.name}`, `job 没成功：${st.text}`);
+      fail(`F2:${fx.name}`, checkJobSucceeded({ state: st.state, text: st.text }).reason);
       results.push({ name: fx.name, what: fx.what, ok: false, note: st.state });
       continue;
     }
@@ -1127,13 +1152,18 @@ try {
       ready = mediaReady.get(up.body.noteUid) ?? null;
       if (!ready) await new Promise((r) => setTimeout(r, 250));
     }
-    if (!ready) {
+    /*
+     * 🔴 **已登记空转（①）**：`undecided` 那一支（收不到事件）今天**只 say 不 fail**，
+     *    于是 `ok` 保持 true、总表那一行照旧是「✔ 通过」。SSE 的事件名改一个字，
+     *    这条契约就再也没有读者了，而没有任何东西会红。
+     *    上面那句注释写的是「收不到就如实说收不到，**不当成通过**」—— 代码不是这么做的。
+     *    **本轮不改**（改了就是改这条腿判什么）；桩在 `selftest-e2e-import.mjs` ⑤-a。
+     */
+    const hv = checkHasVideoContract({ ready, wantVideo, what: fx.what });
+    if (hv.undecided) {
       say(`   ⚠️ 没收到 media.ready（noteUid=${up.body.noteUid}）—— hasVideo 本例未验证`);
-    } else if (ready.hasVideo !== wantVideo) {
-      fail(
-        `F2:${fx.name}`,
-        `media.ready.hasVideo=${ready.hasVideo}，期望 ${wantVideo}（${fx.what}）—— 契约字段在说谎`,
-      );
+    } else if (!hv.ok) {
+      fail(`F2:${fx.name}`, hv.reason);
       ok = false;
     } else {
       say(`   ✔ media.ready.hasVideo=${ready.hasVideo}（与"${fx.what}"相符）`);
@@ -1151,9 +1181,7 @@ try {
    * 渲染成"⊘ 跳过"）配一句指回第 7 节的 note，让人从总表本身就能看出
    * "F2 到底覆盖了哪几个格式、缺的是哪个、为什么"，而不是那一行凭空消失。
    */
-  const madeFixtureNames = new Set(fixtures.map((f) => f.name));
-  for (const kind of ALL_FIXTURE_KINDS) {
-    if (madeFixtureNames.has(kind.name)) continue;
+  for (const kind of missingFixtureKinds({ made: fixtures.map((f) => f.name) })) {
     results.push({
       name: kind.name,
       what: kind.what,
@@ -1183,8 +1211,19 @@ try {
     say(
       `   POST /api/notes/import {input:"${dest}"} → HTTP ${imp.status} ${JSON.stringify(imp.body).slice(0, 300)}`,
     );
-    if (imp.status !== 202) {
-      fail('F2b', `传绝对路径被拒：HTTP ${imp.status} ${JSON.stringify(imp.body).slice(0, 500)}`);
+    /*
+     * ⚠️ 这里 `requireIds:false`，F1 那边是 `true` —— 抽出前就有的不对称，逐字保留。
+     *    202 却没有 jobUid 时下一步会打到 `/api/jobs/undefined` ⇒ 仍然判红，
+     *    只是那句报错指向"job 没成功"而不是"回执缺字段"。判决相同、诊断更差。
+     */
+    const acc = checkImportAccepted({
+      status: imp.status,
+      body: imp.body,
+      requireIds: false,
+      what: '传绝对路径被拒',
+    });
+    if (!acc.ok) {
+      fail('F2b', acc.reason);
       results.push({
         name: 'F2b 绝对路径',
         what: '传路径导入',
@@ -1197,7 +1236,7 @@ try {
       if (st.state !== 'succeeded') {
         const fullErr = await jobErrorFull(imp.body.jobUid);
         if (fullErr) say(`   job.error 全文：\n${fullErr}`);
-        fail('F2b', `job 没成功：${st.text}`);
+        fail('F2b', checkJobSucceeded({ state: st.state, text: st.text }).reason);
         results.push({ name: 'F2b 绝对路径', what: '传路径导入', ok: false, note: st.state });
       } else {
         const ok = await assertPlayable('F2b', imp.body.noteUid, fx.sha, fx.bytes);
@@ -1300,21 +1339,20 @@ try {
       resolved = null;
       say(`   DNS 解析 ${FIXTURE_HOST} 失败：${e.message}`);
     }
-    const loopback = resolved && (resolved.address === '127.0.0.1' || resolved.address === '::1');
+    const loopbackVerdict = checkFixtureHostLoopback({
+      host: FIXTURE_HOST,
+      address: resolved ? resolved.address : null,
+    });
     say(`   ${FIXTURE_HOST} → ${resolved ? resolved.address : '(解析不到)'}`);
 
-    if (!loopback) {
+    if (!loopbackVerdict.ok) {
       /*
        * ★ PROTOCOL §11：这是**非自愿**的跳过 —— 环境没准备好，不是人做的决定。
        *   以前这里只 push 一条 `ok:null` 然后照常 exit 0，也就是
        *   「跳过渲染成了成功」：workflow 里那条 hosts 步骤哪天悄悄坏掉，
        *   这条腿会**继续报绿**，而 F1 一次都没跑过。现在当场判失败。
        */
-      fail(
-        'F1',
-        `fixture 主机名 ${FIXTURE_HOST} 没有指向回环（实测解析到 ${resolved ? resolved.address : '(解析不到)'}）——` +
-          ' F1 一次都没跑。这是环境没准备好，不是"本轮不需要"，所以判失败而不是跳过。',
-      );
+      fail('F1', loopbackVerdict.reason);
       say('   ⚠️ F1 未执行：这台机器上没有把 fixture 主机名指向回环。');
       say('      本脚本**刻意不去改** hosts 文件 —— 那是机器级状态，改了被 kill 就留在那儿了');
       say('      （PROTOCOL §9-bis）。准备工作由 workflow 在一次性 runner 上做。');
@@ -1352,20 +1390,23 @@ try {
           return;
         }
         const total = servedBuf.length;
-        const m = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ''));
-        if (m) {
-          const start = m[1] === '' ? total - Number(m[2]) : Number(m[1]);
-          const end =
-            m[1] === '' ? total - 1 : m[2] === '' ? total - 1 : Math.min(Number(m[2]), total - 1);
-          if (start >= total || start < 0) {
+        /*
+         * ★ 替身自己的 Range 算法在 `parseFixtureRange()` 里，有专门的用例。
+         *   「量错东西」那一类失效的标准形态就是**替身不实现契约、测的是替身自己**：
+         *   这几行算错 ⇒ yt-dlp 下到一个截断的 mp4 ⇒ ffprobe 失败 ⇒
+         *   F1 以**产品坏了**的面目变红。一次这样的假红会让人去改产品。
+         */
+        const rng = parseFixtureRange(req.headers.range, total);
+        if (rng) {
+          if (rng.unsatisfiable) {
             res.writeHead(416, { 'Content-Range': `bytes */${total}` }).end();
             return;
           }
-          const slice = servedBuf.subarray(start, end + 1);
+          const slice = servedBuf.subarray(rng.start, rng.end + 1);
           res.writeHead(206, {
             'Content-Type': 'video/mp4',
             'Content-Length': String(slice.length),
-            'Content-Range': `bytes ${start}-${end}/${total}`,
+            'Content-Range': `bytes ${rng.start}-${rng.end}/${total}`,
             'Accept-Ranges': 'bytes',
           });
           res.end(req.method === 'HEAD' ? undefined : slice);
@@ -1420,11 +1461,14 @@ try {
         `   POST /api/notes/import → HTTP ${imp.status} ${JSON.stringify(imp.body).slice(0, 300)}`,
       );
 
-      if (imp.status !== 202 || !imp.body?.noteUid || !imp.body?.jobUid) {
-        fail(
-          'F1',
-          `链接导入没排上队：HTTP ${imp.status} ${JSON.stringify(imp.body).slice(0, 500)}`,
-        );
+      const f1acc = checkImportAccepted({
+        status: imp.status,
+        body: imp.body,
+        requireIds: true,
+        what: '链接导入没排上队',
+      });
+      if (!f1acc.ok) {
+        fail('F1', f1acc.reason);
         results.push({ name: 'F1 链接导入', what: 'yt-dlp 取回', ok: false, note: '导入被拒' });
       } else {
         const st = await waitForJob(imp.body.jobUid);
@@ -1447,9 +1491,18 @@ try {
          * UA 照旧全文打印 —— 它仍然是"到底有没有人来取过"的硬证据，
          * 只是不再拿它回答"是谁"。
          */
-        if (fixtureHits.length === 0) {
-          fail('F1', '★ fixture 服务器一个请求都没收到 —— 产品根本没去取这个链接');
-        } else if (probeAdapter === 'yt-dlp') {
+        /*
+         * 🔴 **已登记空转（③）**：这里**唯一**会红的是"一个请求都没收到"。
+         *    `adapterId` 不是 yt-dlp 时只 `say('ⓘ …')` —— 也就是说 registry 的
+         *    fallback 链哪天变了（或这个字段改名 ⇒ 恒为 null），F1 仍然全绿，
+         *    而 workflow 与本文件头里那句「验到了 yt-dlp 那一段」从那天起是假话。
+         *    `fixtureHits > 0` 只证明了**有人**去取过 —— DirectHttp 去取也满足它。
+         *    **本轮不改**；桩在 `selftest-e2e-import.mjs` ⑤-d。
+         */
+        const fetcher = classifyFetcher({ probeAdapter, hits: fixtureHits });
+        if (fetcher.kind === 'none') {
+          fail('F1', checkFixtureWasFetched({ hits: fixtureHits }).reason);
+        } else if (fetcher.kind === 'ytdlp') {
           say(`   ✔ 产品报告 adapterId=yt-dlp，且 fixture 真的被取了 ${fixtureHits.length} 次`);
           say('     —— F1 走的确实是站点解析器那一支（registry fallback 链按设计生效）。');
           say('     ⚠️ UA 全是 Chrome：yt-dlp 默认伪装浏览器且轮换版本号，**UA 不能用来认它**。');
@@ -1469,7 +1522,7 @@ try {
           }
           say('   ── daemon 最后 60 行 ──');
           say(tail(daemonLogs, 60));
-          fail('F1', `job 没成功：${st.text}`);
+          fail('F1', checkJobSucceeded({ state: st.state, text: st.text }).reason);
           results.push({ name: 'F1 链接导入', what: 'yt-dlp 取回', ok: false, note: st.state });
         } else {
           /*
@@ -1500,13 +1553,15 @@ try {
    */
   const scr = await j('/api/selfcheck');
   const checks = scr.body?.checks ?? scr.body?.results ?? [];
-  const tools = checks.filter((c) => String(c.id).startsWith('tool.'));
-  const own = tools.filter((c) => c.status === 'ok');
-  const borrowed = tools.filter((c) => c.status === 'warn' && /PATH/i.test(String(c.detail ?? '')));
-  const missing = tools.filter(
-    (c) => c.status === 'fail' || (c.status === 'warn' && !/PATH/i.test(String(c.detail ?? ''))),
-  );
-  say(`   /api/selfcheck 共 ${checks.length} 项，其中 tool.* ${tools.length} 项`);
+  /*
+   * ★ 分档用的是**跨腿共用的那一份**（`e2e-notes-assertions.mjs` 的 `classifyToolChecks`）——
+   *   抄第二份正是本仓反复吃亏的形状，而且那条**散文匹配**的已登记空转
+   *   （`/PATH/i` 打在 daemon 写给人看的中文上）只该有一个实现被盯着。
+   * ⚠️ 后果在本腿更重：那句话改一个词 ⇒ `borrowed` 恒为 0 ⇒ 下面那条 `fail()` 恒不触发
+   *   ⇒ **一个真的在借宿主 ffmpeg 的包会全绿通过 F1/F2**。见 `checkNothingBorrowed()`。
+   */
+  const { tools, own, borrowed, missing } = classifyToolChecks(checks);
+  say(`   /api/selfcheck 共 ${checks.length} 项，其中 ${TOOL_CHECK_PREFIX}* ${tools.length} 项`);
   for (const c of tools) {
     say(
       `     ${String(c.id).padEnd(24)} ${String(c.status).padEnd(6)} ${String(c.detail ?? '')
@@ -1520,13 +1575,16 @@ try {
     `   ⚠️ **借宿主 PATH 的 (${borrowed.length})**：${borrowed.map((c) => c.id).join(', ') || '(无)'}`,
   );
   say(`   ❌ 装不上/不可用 (${missing.length})：${missing.map((c) => c.id).join(', ') || '(无)'}`);
-  if (borrowed.length > 0) {
-    fail(
-      '12.借用',
-      `借了宿主 ${borrowed.length} 个工具：${borrowed.map((c) => c.id).join(', ')} —— 用户机器上不一定有`,
-    );
+  const borrowVerdict = checkNothingBorrowed({ borrowed });
+  if (!borrowVerdict.ok) {
+    fail('12.借用', borrowVerdict.reason);
   } else if (tools.length === 0) {
-    say('   ⚠️ 一个 tool.* 都没有 —— 判据本身不见了，这比它红更值得查。');
+    /*
+     * ⚠️ 空集这一档**只 say 不 fail**（抽出前如此，逐字保留）：拿不到自检结果
+     *    与"一个都没借"在判决上是同一件事。第①类失效（空集判通过）。
+     *    地板放在自检里（`TOOL_CHECK_PREFIX` 的契约守卫），判决不动。
+     */
+    say(`   ⚠️ 一个 ${TOOL_CHECK_PREFIX}* 都没有 —— 判据本身不见了，这比它红更值得查。`);
   } else {
     say('   ✔ 一个都没借。');
   }
@@ -1537,8 +1595,9 @@ try {
   say('   用例                        形态                              结果');
   say('   ' + '-'.repeat(88));
   for (const r of results) {
-    const mark = r.ok === null ? '⊘ 跳过' : r.ok ? '✔ 通过' : '✘ 失败';
-    say(`   ${String(r.name).padEnd(26)} ${String(r.what).padEnd(32)} ${mark}  ${r.note}`);
+    say(
+      `   ${String(r.name).padEnd(26)} ${String(r.what).padEnd(32)} ${verdictMark(r.ok)}  ${r.note}`,
+    );
   }
 } catch (e) {
   say('');

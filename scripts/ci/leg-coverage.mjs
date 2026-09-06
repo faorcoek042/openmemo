@@ -35,7 +35,8 @@
  *
  * ## 用法
  *
- *   node scripts/ci/leg-coverage.mjs             # 扫一遍，列出「删了也绿」的格子
+ *   node scripts/ci/leg-coverage.mjs             # notes 腿（默认），列出「删了也绿」的格子
+ *   node scripts/ci/leg-coverage.mjs --leg import  # import 腿
  *   node scripts/ci/leg-coverage.mjs --json out.json
  *
  * 退出码：0 = 扫完了（**不代表全覆盖**，看输出）；2 = 工具自己没跑起来。
@@ -59,9 +60,25 @@ import { isDirectRun } from '../lib/entrypoint.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
 
-/** 被扫的那一对：判据模块 + 证明它的自检。 */
-const TARGET = 'e2e-notes-assertions.mjs';
-const PROVER = 'selftest-e2e-notes.mjs';
+/**
+ * 被扫的那一对：判据模块 + 证明它的自检。**按腿选**（`--leg notes|import`）。
+ *
+ * ⚠️ 默认仍是 `notes`：这个工具入库时只有那一对，改默认值等于让所有既有的
+ * 复现命令（`node scripts/ci/leg-coverage.mjs`）悄悄换了对象 —— 而"换了对象"
+ * 与"结论变了"在输出里长得一模一样。
+ */
+const LEGS = {
+  notes: { target: 'e2e-notes-assertions.mjs', prover: 'selftest-e2e-notes.mjs' },
+  import: { target: 'e2e-import-assertions.mjs', prover: 'selftest-e2e-import.mjs' },
+};
+const legAt = process.argv.indexOf('--leg');
+const LEG = legAt >= 0 ? process.argv[legAt + 1] : 'notes';
+if (!LEGS[LEG]) {
+  console.error(`✘ leg-coverage: 不认识的 --leg ${LEG}（有：${Object.keys(LEGS).join(' / ')}）`);
+  process.exit(2);
+}
+const TARGET = LEGS[LEG].target;
+const PROVER = LEGS[LEG].prover;
 
 /**
  * 判据模块里**被相邻那一格数学上吞掉**的那些格子。
@@ -118,7 +135,50 @@ export const SUBSUMED_LEGS = Object.freeze([
 ]);
 
 /**
- * 把 `all([ … ])` 块里**深度为 1** 的那些条目切出来，返回 `[start, end)` 区间。
+ * 同一份记录，**import 腿的那一份**（`e2e-import-assertions.mjs`）。
+ *
+ * 与上面那份的规则逐字相同：存的不是"这几格可以不管"，是**可核对的事实** ——
+ * `needle` 必须在判据源码里恰好出现一次，由 `selftest-e2e-import.mjs` 的 ②-bis 每轮验一遍。
+ *
+ * ⚠️ **两份刻意不合并成一个 map**：`SUBSUMED_LEGS` 这个名字已经被
+ * `selftest-e2e-notes.mjs` import 着，改它的形状会让那条腿的记录守卫在
+ * 一次无关的重构里静默失效 —— 而它失效的样子（needle 匹配不到 ⇒ 红）
+ * 与"有人动了那一格"完全一样，会把人领去查一个不存在的改动。
+ */
+export const SUBSUMED_LEGS_IMPORT = Object.freeze([
+  {
+    needle: 'must(!!found, `storeRoot 里找不到 ${name} —— ${whyNeeded}。storeRoot=${storeRoot}`)',
+    why:
+      "`found` 为 null ⇒ 下一格 `String(null).startsWith(storeRoot)` 即 `'null'.startsWith('/store')` " +
+      '恒假 ⇒ 必响。给不出专属坏输入（"找不到"必然连带前缀比对也不成立），' +
+      '它守的是**那句报错说得清不清楚**：「找不到」和「找到了但在别处」要分得开。',
+  },
+  {
+    needle: "`没有 role='${ASSET_ROLES.original}' 的资产 —— 媒体没落库。note.status=${noteStatus}`",
+    why:
+      "`asset` 缺席 ⇒ 下一格 `asset?.state === 'ready'` 为假 ⇒ 必响。" +
+      '⚠️ 那个可选链是**刻意**的：写成 `asset.state` 的话删掉这一格会当场抛类型错误，' +
+      '于是这一格在扫描器里变成"判不了"，而判不了会被误读成没覆盖。' +
+      '⚠️ 这段话里**不许出现**运行时错误类的英文名：`runWith()` 判「这一格删了会不会崩」' +
+      '靠的是对整段输出做正则，而这句 `why` 会被②-bis 原样打印出来 ——' +
+      '写一个 `Type` + `Error` 拼起来的词，工具就会把这一格从"没覆盖"错记成"判不了"' +
+      '（`[实测]` 第一版就是这么把它记错的）。**守卫在读散文**，同一族的第五次。',
+  },
+]);
+
+/**
+ * 判据模块里那些「一格」的**组合子开头**。
+ *
+ * ⚠️ `collect([` 是 import 腿加的：那条腿的审计是「收集所有失败，最后一次性摊开」，
+ * 所以它平行的那几格用的是 `collect` 而不是短路的 `all`。**漏掉它的后果是这个工具
+ * 把那些格子当成不存在** —— 而"扫不到"与"全都覆盖了"在输出里长得一模一样
+ * （下面 `main()` 那道 `legs.length === 0` 的闸只挡得住一格都扫不到，挡不住少扫一半）。
+ */
+const LEG_OPENERS = ['all([', 'collect(['];
+
+/**
+ * 把 `all([ … ])` / `collect([ … ])` 块里**深度为 1** 的那些条目切出来，
+ * 返回 `[start, end)` 区间（按位置排序）。
  *
  * 刻意用最笨的括号计数，不引 parser：这个工具的判决是"删掉之后自检红不红"，
  * 切错了会表现成**语法坏掉**，而那一档被单独报出来（`kind: 'broke'`），
@@ -126,11 +186,17 @@ export const SUBSUMED_LEGS = Object.freeze([
  */
 export function findLegs(text) {
   const out = [];
+  for (const opener of LEG_OPENERS) out.push(...findLegsWith(text, opener));
+  return out.sort((a, b) => a[0] - b[0]);
+}
+
+function findLegsWith(text, opener) {
+  const out = [];
   let i = 0;
   for (;;) {
-    i = text.indexOf('all([', i);
+    i = text.indexOf(opener, i);
     if (i === -1) break;
-    const open = i + 'all(['.length;
+    const open = i + opener.length;
     let depth = 1;
     let j = open;
     let entryStart = open;
@@ -174,7 +240,32 @@ function runWith(mutatedSource) {
     // ⚠️ `leg-coverage.mjs` 自己也要复制过去：自检 import 它取 `SUBSUMED_LEGS`。
     //    漏了它 ⇒ 基线那一次就 ERR_MODULE_NOT_FOUND ⇒ 下面那道基线闸会拦住，
     //    而不是让每一格都"红"、把 99/99 报成全覆盖（`[实测]` 第一次跑就撞了这个）。
-    for (const f of [PROVER, 'leg-coverage.mjs', 'mutation-verdict.mjs', 'platform-scope.mjs']) {
+    /*
+     * ⚠️ `e2e-notes-assertions.mjs` 在这份名单里，**即使扫的是 import 腿**：
+     *    `e2e-import-assertions.mjs` 从它 re-export `classifyToolChecks`
+     *    （跨腿共用的同一条判据，不抄第二份）。漏了它 ⇒ 基线那一次就
+     *    `ERR_MODULE_NOT_FOUND` ⇒ 下面那道基线闸拦住，而不是把每一格都报成"有覆盖"。
+     */
+    for (const f of [
+      PROVER,
+      'leg-coverage.mjs',
+      'mutation-verdict.mjs',
+      'platform-scope.mjs',
+      'e2e-notes-assertions.mjs',
+      /*
+       * ⚠️ 审计本体也要：`selftest-e2e-import.mjs` 的④「接线守卫」与⑤「空转的桩」
+       *    都**读它的源码**（判据模块有没有被真的接上、那四个缺口还在不在）。
+       *    缺了它，基线那一次就红 ⇒ 下面那道闸拦住，而不是把每一格都报成"有覆盖"。
+       */
+      'e2e-import-audit.mjs',
+    ]) {
+      /*
+       * ★★ **绝不把 TARGET 原样拷回去**：扫 notes 腿时 TARGET 就是
+       *    `e2e-notes-assertions.mjs`，拷贝会把上面刚写进去的**变异体覆盖掉** ⇒
+       *    每一次变异都变成空操作 ⇒ 每一格都"删了也绿" ⇒ 工具报「0/99 有覆盖」。
+       *    那是一个比没有工具更坏的结论，而它看起来只是"覆盖率很低"。
+       */
+      if (f === TARGET) continue;
       try {
         cpSync(join(HERE, f), join(dir, 'scripts', 'ci', f));
       } catch {
@@ -256,7 +347,7 @@ function main() {
   const src = readFileSync(join(HERE, TARGET), 'utf8');
   const legs = findLegs(src);
 
-  console.log(`══ leg-coverage ══ ${TARGET} × ${PROVER}`);
+  console.log(`══ leg-coverage ══ [--leg ${LEG}] ${TARGET} × ${PROVER}`);
   console.log(`   扫到 ${legs.length} 格；每格删掉一次、跑一遍自检（几十秒）\n`);
   if (legs.length === 0) {
     console.error('✘ 一格都没扫到 —— 切法过期了（判据不再用 `all([…])` 的形状？）。');
@@ -281,14 +372,15 @@ function main() {
   const covered = legs.length - uncovered.length - brokeAt.length;
   console.log(`── 有专属坏输入（删掉它自检当场红）：${covered} / ${legs.length}`);
 
-  const known = SUBSUMED_LEGS.map((s) => s.needle);
+  const subsumed = LEG === 'import' ? SUBSUMED_LEGS_IMPORT : SUBSUMED_LEGS;
+  const known = subsumed.map((s) => s.needle);
   const isKnown = (s) => known.some((n) => s.includes(snippet(n).slice(0, 40)));
 
   if (uncovered.length > 0) {
     console.log('');
     console.log(`── 删了也绿（没有专属坏输入）：${uncovered.length} 格`);
     for (const s of uncovered) {
-      const k = SUBSUMED_LEGS.find((x) => s.includes(snippet(x.needle).slice(0, 40)));
+      const k = subsumed.find((x) => s.includes(snippet(x.needle).slice(0, 40)));
       console.log(`   · ${s}`);
       console.log(
         `     ${k ? `已登记：${k.why}` : '🔴 **没有登记** —— 要么补一条专属坏输入，要么想清楚它为什么被吞掉再登记'}`,
@@ -323,9 +415,9 @@ function main() {
   }
 
   console.log('');
-  console.log('⚠️ 这个工具**不判红绿**（退出码恒 0）：那 7 格合法地被吞掉，');
-  console.log('   做成门禁就是一盏常亮的灯。判决那一半在 selftest-e2e-notes.mjs 里 ——');
-  console.log('   `SUBSUMED_LEGS` 的每条 needle 必须在判据源码里恰好出现一次。');
+  console.log(`⚠️ 这个工具**不判红绿**（退出码恒 0）：那 ${subsumed.length} 格合法地被吞掉，`);
+  console.log(`   做成门禁就是一盏常亮的灯。判决那一半在 ${PROVER} 的 ②-bis 里 ——`);
+  console.log('   那份记录的每条 needle 必须在判据源码里恰好出现一次。');
 }
 
 // 被 selftest import 时不自动跑。
