@@ -96,10 +96,12 @@ const PROVER = LEGS[LEG].prover;
  * 由 `selftest-e2e-notes.mjs` 每轮验一遍。动了那一格 ⇒ 当场红 ⇒
  * 有人必须回来重跑这个工具，并更新这份记录。
  *
- * `[实测 2026-09-06，b361e36 + 本 PR]` **99 格 → 91 格有专属坏输入**、这 7 格被吞掉、
- * 另有 1 格（`checkExportEnvelope` 的 `!!expect`）删掉就 TypeError ⇒ 判不了，单独一栏。
+ * `[实测 2026-09-06]` **99 格 → 91 格有专属坏输入**、这 7 格被吞掉、
+ * 另有 1 格（`checkExportEnvelope` 的 `!!expect`）删掉就抛类型错误 ⇒ 判不了，单独一栏。
  * ⚠️ 那 8 格加起来才是 99 —— 报覆盖率时**三栏都要念**，只念 91/99 会把
  * "判不了"混进"没覆盖"，把"没覆盖"混进"有覆盖"，两个方向都失真。
+ * ⚠️ `findLegs` 从"只认 `all([`"改成按结构判之后**这三个数一个没变**（同日复测）——
+ * 那次改动的目的是让 import 腿那 11 格 `collect` 别再隐形，不是重新定义 notes 腿的格子。
  */
 export const SUBSUMED_LEGS = Object.freeze([
   {
@@ -140,6 +142,9 @@ export const SUBSUMED_LEGS = Object.freeze([
  * 与上面那份的规则逐字相同：存的不是"这几格可以不管"，是**可核对的事实** ——
  * `needle` 必须在判据源码里恰好出现一次，由 `selftest-e2e-import.mjs` 的 ②-bis 每轮验一遍。
  *
+ * `[实测 2026-09-06，四条空转全修那一轮]` **20 格 → 17 格有专属坏输入**、这 3 格被吞掉、
+ * **0 格判不了**。
+ *
  * ⚠️ **两份刻意不合并成一个 map**：`SUBSUMED_LEGS` 这个名字已经被
  * `selftest-e2e-notes.mjs` import 着，改它的形状会让那条腿的记录守卫在
  * 一次无关的重构里静默失效 —— 而它失效的样子（needle 匹配不到 ⇒ 红）
@@ -149,9 +154,11 @@ export const SUBSUMED_LEGS_IMPORT = Object.freeze([
   {
     needle: 'must(!!found, `storeRoot 里找不到 ${name} —— ${whyNeeded}。storeRoot=${storeRoot}`)',
     why:
-      "`found` 为 null ⇒ 下一格 `String(null).startsWith(storeRoot)` 即 `'null'.startsWith('/store')` " +
-      '恒假 ⇒ 必响。给不出专属坏输入（"找不到"必然连带前缀比对也不成立），' +
-      '它守的是**那句报错说得清不清楚**：「找不到」和「找到了但在别处」要分得开。',
+      '`found` 为 null ⇒ 下一格 `isUnderRoot(storeRoot, null, …)` 把它 resolve 成 ' +
+      '`<cwd>/null`，相对路径以 `..` 开头 ⇒ 必响。给不出专属坏输入' +
+      '（"找不到"必然连带"不在 storeRoot 底下"也成立），' +
+      '它守的是**那句报错说得清不清楚**：「找不到」和「找到了但在别处」要分得开 ——' +
+      '后者今天真的会响（storeRoot 里一个指向宿主的软链），两句话指向完全不同的排查方向。',
   },
   {
     needle: "`没有 role='${ASSET_ROLES.original}' 的资产 —— 媒体没落库。note.status=${noteStatus}`",
@@ -159,65 +166,128 @@ export const SUBSUMED_LEGS_IMPORT = Object.freeze([
       "`asset` 缺席 ⇒ 下一格 `asset?.state === 'ready'` 为假 ⇒ 必响。" +
       '⚠️ 那个可选链是**刻意**的：写成 `asset.state` 的话删掉这一格会当场抛类型错误，' +
       '于是这一格在扫描器里变成"判不了"，而判不了会被误读成没覆盖。' +
-      '⚠️ 这段话里**不许出现**运行时错误类的英文名：`runWith()` 判「这一格删了会不会崩」' +
-      '靠的是对整段输出做正则，而这句 `why` 会被②-bis 原样打印出来 ——' +
-      '写一个 `Type` + `Error` 拼起来的词，工具就会把这一格从"没覆盖"错记成"判不了"' +
-      '（`[实测]` 第一版就是这么把它记错的）。**守卫在读散文**，同一族的第五次。',
+      '（历史：这句 `why` 里原本写着一个 `Type` + `Error` 拼起来的词，' +
+      '而当时 `runWith()` 判「删了会不会崩」靠的是对整段输出做正则、这句话会被②-bis ' +
+      '原样打印出来 ⇒ 工具把这一格从"没覆盖"错记成"判不了"。' +
+      '**守卫自己在读散文。** 分档已于 2026-09-06 改成读 `--verdict-out` 那份 JSON，' +
+      '现在这段话写什么都不影响判决 —— 留着这条记录，是因为下一个写散文的人需要知道为什么。)',
+  },
+  {
+    needle: "must(f.kind !== 'none', '★ fixture 服务器一个请求都没收到 —— 产品根本没去取这个链接')",
+    why:
+      "`hits` 为空 ⇒ `classifyFetcher` 回 `kind: 'none'` ⇒ 下一格 `f.kind === 'ytdlp'` " +
+      '恒假 ⇒ 必响。给不出专属坏输入（"没人来取"必然连带"取的不是 yt-dlp"也成立）。' +
+      '⚠️ 它**不是**冗余：两句报错指向完全不同的排查方向 ——' +
+      '「产品根本没出去」查的是 registry / SSRF 防线，' +
+      '「取的不是站点解析器」查的是 fallback 链的顺序。' +
+      '而且它正是 ⑤-d 那条空转的**弱版本**（此前 §11 里唯一会红的就是它），' +
+      '留在第一格是为了让那句更精确的报错排在它后面、而不是替掉它。',
   },
 ]);
 
 /**
- * 判据模块里那些「一格」的**组合子开头**。
+ * 「一格」的判据 —— **按结构，不按名字**。
  *
- * ⚠️ `collect([` 是 import 腿加的：那条腿的审计是「收集所有失败，最后一次性摊开」，
- * 所以它平行的那几格用的是 `collect` 而不是短路的 `all`。**漏掉它的后果是这个工具
- * 把那些格子当成不存在** —— 而"扫不到"与"全都覆盖了"在输出里长得一模一样
- * （下面 `main()` 那道 `legs.length === 0` 的闸只挡得住一格都扫不到，挡不住少扫一半）。
- */
-const LEG_OPENERS = ['all([', 'collect(['];
-
-/**
- * 把 `all([ … ])` / `collect([ … ])` 块里**深度为 1** 的那些条目切出来，
- * 返回 `[start, end)` 区间（按位置排序）。
+ * ## ⚠️ 为什么不是一份 `['all([', 'collect([']` 的清单（2026-09-06 裁决）
  *
- * 刻意用最笨的括号计数，不引 parser：这个工具的判决是"删掉之后自检红不红"，
- * 切错了会表现成**语法坏掉**，而那一档被单独报出来（`kind: 'broke'`），
- * 不会被悄悄读成"这一格有覆盖"。
+ * 第一版就是那样：只认 `all([`。import 腿引入 `collect([` 之后，那几格**在这个工具
+ * 眼里整个不存在** —— 而"少扫一半"与"全都覆盖了"在输出里长得一模一样
+ * （下面 `main()` 那道 `legs.length === 0` 的闸只挡得住一格都扫不到）。
+ * 补一个名字进清单就是**又一份会漏的手抄名单**，本仓已经在
+ * `check-orphan-exports` 的裸名匹配、T-163 手抄 7/29、`selftest-launcher-path`
+ * 的 LEGS 手写 4/8 上各栽过一次。
+ *
+ * 所以判据换成一句与名字无关的结构话：
+ *
+ *   > **一个调用，它的第一个实参是数组字面量，而那个数组的每一项都是零参箭头函数。**
+ *
+ * 那正是这两个判据模块里"一格"的形状（`() => must(…)` / `() => same(…)`），
+ * 而它不需要知道外面那个函数叫 `all` 还是 `collect` 还是别的什么。
+ *
+ * ## ⚠️ 它**已知**漏的形态（写在这里，因为漏了不会有任何东西说话）
+ *
+ *   · **数组不是字面量**：`collect(xs.map((x) => () => must(…)))` —— 格子数由数据决定，
+ *     静态切不出来。`checkRequiredPacksInstalled()` 今天就是这个形状，
+ *     它在这个工具里算**一格都没有**（它的三条腿由自检的 ②「每个前缀一个坏输入」覆盖）。
+ *   · **有一项不是 `() =>` 箭头**：整块被跳过（宁可少算，也不要把一个切错的区间
+ *     报成"这一格没覆盖"—— 那会让人去补一个不存在的用例）。
+ *   · **嵌套在别的表达式里的数组字面量**：只要满足上面两条就会被算进来，
+ *     哪怕它压根不是判据组合子。今天没有这种误报；真出现了，它会表现成
+ *     一格恒"删了也绿"，而不是悄悄消失 —— **方向是对的那一边**。
  */
 export function findLegs(text) {
   const out = [];
-  for (const opener of LEG_OPENERS) out.push(...findLegsWith(text, opener));
+  for (let i = 0; i < text.length; i++) {
+    // 结构：`<标识符或 )> ( [` —— 一个调用，第一个实参是数组字面量
+    if (text[i] !== '(' || text[i + 1] !== '[') continue;
+    if (!/[A-Za-z0-9_$)\]]/.test(text[i - 1] ?? '')) continue;
+    const block = sliceEntries(text, i + 2);
+    if (block === null) continue;
+    // 每一项都必须是零参箭头函数，否则这不是"一格一格"的那种数组
+    if (block.length === 0) continue;
+    if (!block.every(([a, b]) => isThunk(text.slice(a, b)))) continue;
+    out.push(...block);
+    i = block[block.length - 1][1];
+  }
   return out.sort((a, b) => a[0] - b[0]);
 }
 
-function findLegsWith(text, opener) {
-  const out = [];
-  let i = 0;
+/**
+ * 这一项是不是一个**零参箭头函数**（判据模块里"一格"的形状）。
+ *
+ * ⚠️ 必须先剥掉前导的逗号、空白**和注释**。`[实测]` 少了剥注释那一步，
+ * `e2e-notes-assertions.mjs` 从 99 格掉到 94 —— 因为有两块的某一项前面挂着一段
+ * 一段**块注释**（那两段恰恰是「这一格必须排在前面」「非空虚前提」这类最该被盯住的说明）。
+ * **整块被跳过、5 格无声消失**，而输出看起来只是"格子少了点"。
+ */
+function isThunk(entry) {
+  let s = String(entry).replace(/^\s*,/, '');
   for (;;) {
-    i = text.indexOf(opener, i);
-    if (i === -1) break;
-    const open = i + opener.length;
-    let depth = 1;
-    let j = open;
-    let entryStart = open;
-    const entries = [];
-    while (j < text.length && depth > 0) {
-      const c = text[j];
-      if ('([{'.includes(c)) depth++;
-      else if (')]}'.includes(c)) {
-        depth--;
-        if (depth === 0) break;
-      } else if (c === ',' && depth === 1) {
-        entries.push([entryStart, j + 1]);
-        entryStart = j + 1;
-      }
-      j++;
+    const before = s;
+    s = s.replace(/^\s+/, '');
+    if (s.startsWith('/*')) {
+      const end = s.indexOf('*/');
+      if (end === -1) return false;
+      s = s.slice(end + 2);
+    } else if (s.startsWith('//')) {
+      const nl = s.indexOf('\n');
+      if (nl === -1) return false;
+      s = s.slice(nl + 1);
     }
-    if (entryStart < j && text.slice(entryStart, j).trim()) entries.push([entryStart, j]);
-    out.push(...entries);
-    i = j;
+    if (s === before) break;
   }
-  return out;
+  return /^\(\s*\)\s*=>/.test(s);
+}
+
+/**
+ * 从数组字面量内部（`open` = `[` 之后一位）切出**深度为 1** 的那些条目。
+ *
+ * 刻意用最笨的括号计数，不引 parser：这个工具的判决是"删掉之后自检红不红"，
+ * 切错了会表现成**语法坏掉**，而那一档被单独报出来（`broke`），
+ * 不会被悄悄读成"这一格有覆盖"。
+ *
+ * @returns {Array<[number, number]>|null} `null` = 括号没配平（不是一个完整的数组）
+ */
+function sliceEntries(text, open) {
+  let depth = 1;
+  let j = open;
+  let entryStart = open;
+  const entries = [];
+  while (j < text.length && depth > 0) {
+    const c = text[j];
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) {
+      depth--;
+      if (depth === 0) break;
+    } else if (c === ',' && depth === 1) {
+      entries.push([entryStart, j + 1]);
+      entryStart = j + 1;
+    }
+    j++;
+  }
+  if (depth !== 0) return null;
+  if (entryStart < j && text.slice(entryStart, j).trim()) entries.push([entryStart, j]);
+  return entries;
 }
 
 /** 一行能读的摘要（判据源码那一格压成一行）。 */
@@ -295,11 +365,6 @@ function runWith(mutatedSource) {
     } catch {
       /* 同上 */
     }
-    const r = spawnSync('node', [join(dir, 'scripts', 'ci', PROVER)], {
-      encoding: 'utf8',
-      timeout: 60_000,
-    });
-    const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
     /*
      * ★★ 「红了」有三种，**必须分开**，否则这个工具会把自己骗过去。
      *
@@ -308,18 +373,53 @@ function runWith(mutatedSource) {
      * 而这个工具正是**把那一格删掉**再跑 ⇒ ②-bis 当场红 ⇒ 工具读成"这一格有覆盖"。
      * **那 7 格的红来自记录守卫，不是来自任何一个坏输入。**
      * 一个把自己的记录守卫读成覆盖率的工具，比没有工具更坏。
+     *
+     * ## ⚠️ 分档**按结构**，不读一个字的散文（2026-09-06 裁决）
+     *
+     * 这三档此前是这么分的：`broke` 靠 `/SyntaxError|ReferenceError|TypeError|…/`
+     * 打在**整段输出**上，`recordOnly` 靠匹配一句中文。
+     * `[实测]` 我在 `SUBSUMED_LEGS_IMPORT` 的一条 `why` 里写了一次 `Type` + `Error`
+     * 拼起来的词（那句 `why` 会被 ②-bis 原样打印出来），它当场把那一格
+     * 从「没覆盖」错记成「判不了」。**守卫自己在读散文** —— 与这一整轮在猎的同一个病，
+     * 而且长在刚入库的工具上。
+     *
+     * 现在自检把 `{ cases, failures, failed[{name, kind}] }` 落盘（`--verdict-out`），
+     * 这里只读那份 JSON：
+     *
+     *   · 文件读不出来          ⇒ 它压根没跑到写文件那一行 ⇒ **崩了**，什么都没证明
+     *   · `failures` 与退出码对不上 ⇒ 账不自洽（自检自己以别的方式挂了）⇒ 同样算崩
+     *   · 全部失败的 `kind` 都是 `subsumed-record` ⇒ 红的只有记录守卫 ⇒ **不算覆盖**
+     *
+     * 三条判据都只看字段，不看措辞。自检那边的报错文案随便改，这里不受影响。
      */
-    // ⚠️ 只看**逐条**那些 ✘（它们是缩进的）。结尾那句汇总 `✘ selftest-e2e-notes：…`
-    //    顶格且不含这个短语，算进来会让下面的 every() 恒假 ⇒ recordOnly 永远不触发
-    //    ⇒ 工具又把 7 格记录守卫读成覆盖率（`[实测]` 第二次跑就是栽在这一行）。
-    const failLines = out.split('\n').filter((l) => /^\s+✘ /.test(l));
-    const recordOnly =
-      failLines.length > 0 && failLines.every((l) => l.includes('SUBSUMED_LEGS 对不上判据源码'));
+    const verdictFile = join(dir, 'verdict.json');
+    const r = spawnSync(
+      'node',
+      [join(dir, 'scripts', 'ci', PROVER), '--verdict-out', verdictFile],
+      {
+        encoding: 'utf8',
+        timeout: 60_000,
+      },
+    );
+    const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+    let verdict = null;
+    try {
+      verdict = JSON.parse(readFileSync(verdictFile, 'utf8'));
+    } catch {
+      /* 没写出来 = 没跑到那一行 */
+    }
+    if (verdict === null || !Array.isArray(verdict.failed)) {
+      return { green: false, broke: true, recordOnly: false, out };
+    }
+    const failures = Number(verdict.failures);
+    // 账不自洽：自检说 0 条失败却非 0 退出（或反过来）—— 它以别的方式挂了。
+    if ((failures === 0) !== (r.status === 0)) {
+      return { green: false, broke: true, recordOnly: false, out };
+    }
     return {
-      green: r.status === 0,
-      // 语法/引用坏掉与"断言判红"必须分开：前者什么都没证明。
-      broke: /SyntaxError|ReferenceError|TypeError|Cannot find|ERR_MODULE_NOT_FOUND/.test(out),
-      recordOnly,
+      green: failures === 0,
+      broke: false,
+      recordOnly: failures > 0 && verdict.failed.every((f) => f?.kind === 'subsumed-record'),
       out,
     };
   } finally {

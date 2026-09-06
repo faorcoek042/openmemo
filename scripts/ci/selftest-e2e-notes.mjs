@@ -44,7 +44,7 @@
  * 用法：`node scripts/ci/selftest-e2e-notes.mjs`（已挂进 `pnpm test:ci-scripts`）
  */
 import { strict as assert } from 'node:assert';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -112,9 +112,15 @@ const ok = (name) => {
   cases += 1;
   say(`  ✔ ${name}`);
 };
-const bad = (name, why) => {
+/**
+ * 一条失败的**结构化**记录。`kind` 是给 `leg-coverage.mjs` 分档用的 ——
+ * 它此前靠匹配报错文本里的中文来认「红的只是记录守卫」，那是在读散文。
+ */
+const failed = [];
+const bad = (name, why, kind = 'assertion') => {
   cases += 1;
   failures += 1;
+  failed.push({ name, kind });
   say(`  ✘ ${name}\n      ${why}`);
 };
 
@@ -1108,6 +1114,12 @@ say('── ②-bis 「删了也绿」那 7 格的登记还对得上吗（`leg-c
         `源码里 ${hits} 处（期望恰好 1 处）—— 这一格被改/删/复制了。\n` +
           `      它原本是「删了也绿」的 7 格之一，理由是：${leg.why}\n` +
           '      请重跑 `node scripts/ci/leg-coverage.mjs`，并更新 SUBSUMED_LEGS。',
+        /*
+         * ★ `kind` 是给 `leg-coverage.mjs` 分档的**结构信号**：这条红来自
+         *   **记录守卫**（它正在逐格删格子，所以这条必然响），不是来自任何一个坏输入。
+         *   它此前靠匹配上面那句中文来认，`[实测]` 因此把一格误记过。
+         */
+        'subsumed-record',
       );
     }
   }
@@ -1675,6 +1687,36 @@ registerVacuity(
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+/**
+ * ★ **机器可读的判决**（`--verdict-out <file>`）—— 给 `leg-coverage.mjs` 用。
+ *
+ * ## 为什么这个文件必须存在（2026-09-06 裁决）
+ *
+ * 那个工具此前判「这一格删了会不会崩」靠的是**对整段输出做正则**
+ * （`/SyntaxError|ReferenceError|TypeError|…/`），判「红的是不是只有记录守卫」靠的是
+ * **匹配一句中文**。`[实测]` 我在一条 `why` 说明里写了一次 `Type` + `Error` 拼起来的词，
+ * 它当场把那一格从「没覆盖」错记成「判不了」——
+ * **守卫自己在读散文**，与这一整轮在猎的是同一个病。
+ *
+ * 所以判决改成结构化的：本文件把 `{ cases, failures, failed[] }` 落盘，
+ * 每条失败带一个 `kind`。`leg-coverage.mjs` 读这份 JSON：
+ *
+ *   · 文件**不存在** ⇒ 这次跑压根没走到这里 ⇒ `broke`（崩了，什么都没证明）
+ *   · `failures === 0` 而退出码非 0（或反过来）⇒ 账对不上 ⇒ 同样算 `broke`
+ *   · 全部失败的 `kind` 都是 `subsumed-record` ⇒ 红的只是记录守卫，**不算覆盖**
+ *
+ * 三条都不看一个字的散文。
+ */
+{
+  const at = process.argv.indexOf('--verdict-out');
+  if (at >= 0 && process.argv[at + 1]) {
+    writeFileSync(
+      process.argv[at + 1],
+      `${JSON.stringify({ cases, failures, failed }, null, 2)}\n`,
+    );
+  }
+}
 /* ══════════════════════════════════════════════════════════════════════════ */
 say('');
 say('─'.repeat(78));

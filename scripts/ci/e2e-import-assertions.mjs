@@ -56,26 +56,45 @@
  * 调用方拿到的是同一个形状（`{ ok, reason, reasons }`），`reasons` 里是**全部**
  * 不成立的理由，顺序与抽出前逐字一致。
  *
- * ## ⚠️ 这一轮**只搬家，不改判什么**
+ * ## ✅ 第一轮（#98）只搬家；这一轮把抓到的**四条空转全修了**（Manager 2026-09-06 裁决）
  *
- * 抽的过程中发现的空转**一条都没有顺手改**，全部登记在各自函数的注释里，
- * 并在 `selftest-e2e-import.mjs` 的 ⑤ 那一节留了会说话的桩：
- * **修好的那天它们会红**，逼出一次显式的「删桩 + 更新报告」。
+ * 抽出的时候发现四条「把修法抽掉它也不红」，当时一条都没动、只留了会说话的桩。
+ * 裁决是**四条全修**，理由逐字：它们**每一条都正好是「判据和它声称守的东西对不上」**。
+ * 修成什么样各见对应函数的 `## ✅ 已修` 段：
  *
- * 同理，这里**没有**给任何判据新增「非空虚前提」那样的格子（notes 腿加过几处）。
- * 新增一格 = 新增一个会红的条件 = 改了这条腿判什么。本轮要的地板一律放在
- * `selftest-e2e-import.mjs` 里（那里红了是"判据自己坏了"，不是"产品坏了"）。
+ *   ① `checkHasVideoContract()`   收不到 `media.ready` ⇒ **第三态**，计入未决计数，不是绿
+ *   ② `checkFetchedByYtdlp()`     `adapterId` 进判决 —— 断**哪个适配器**，不是"有没有人"
+ *   ③ `checkToolUnderStoreRoot()` + `isUnderRoot()`  真伤（前缀比对）+ 问错了问题，两件事
+ *   ④ `checkFullFetch()` / `checkUnsatisfiableRange()`  两格补上 —— 它们本来就该在
+ *
+ * ⚠️ `selftest-e2e-import.mjs` 的 ⑤ 那一节**保留**，每个桩翻了个面：
+ *    从「缺口仍在」变成「**修法仍在**」。哪天有人把修法拆掉，那里当场红。
  *
  * ## 关于第三态
  *
  * 本文件里**只有一个**函数回第三态：`checkHasVideoContract()` 的 `undecided`。
- * 它对应的是审计里那句「没收到 `media.ready` ⇒ 本例未验证」——
- * 那不是通过、也不是失败，而**今天的审计把它渲染成了通过**（见那个函数的注释，
- * 已登记为空转 ①）。给它一个有名字的第三态，是为了让那条缺口在类型上说得出口，
- * **不是**为了改判决：审计侧照旧只 `say()`。
+ * 它是「**这一格有没有资格说『通过』**」的答案 —— 收不到事件就是没资格。
+ *
+ * ⚠️ 那不是"顺手多加的一档"：**把未决判成失败是另一种说假话**（SSE 收不到可能是
+ * 时序或连接抖动），而把未决判成通过正是它修好之前的样子。三态由
+ * `--undecided-out` → `sum-undecided.mjs` → 凭证这条管道承接，
+ * 接线由 `selftest-undecided-wiring.mjs` 的 R1–R7 守着。
+ *
+ * ⚠️ 本文件仍然**没有**给任何判据新增「非空虚前提」那样的格子（notes 腿加过几处）：
+ * 地板一律放在 `selftest-e2e-import.mjs` 里 —— 那里红了是"判据自己坏了"，
+ * 不是"产品坏了"，两种红不该走同一条通道。
  *
  * 证明在 `scripts/ci/selftest-e2e-import.mjs`：把这里任何一条判据抽掉，那边当场红。
  */
+
+/*
+ * ⚠️ 只 import `node:path` 的**纯**那一半（`posix` / `win32` 两份词法实现）。
+ *
+ * 它不碰磁盘、不看 `process.platform`（平台是 `isUnderRoot` 的**入参**）——
+ * 与文件头「只吃数据、不读盘」那条不冲突。用它是为了 `relative()`：
+ * 判「一个路径在不在某个根底下」不许自己拼字符串，那正是 ③-b 修的那个坑。
+ */
+import { posix, win32 } from 'node:path';
 
 /*
  * ★ `classifyToolChecks` 是**跨腿共用的同一条判据**，不是这里再抄一份。
@@ -198,6 +217,38 @@ export const UPLOAD_FILE_FIELD = 'file';
  * 尤其比 User-Agent 硬：yt-dlp 默认伪装成浏览器且每次轮换版本号（审计里有实测现场）。
  */
 export const YTDLP_ADAPTER_ID = 'yt-dlp';
+
+/**
+ * `/media` 按**扩展名**判出来的 Content-Type —— 与 `apps/daemon/src/http/media.ts`
+ * 的 `MIME_BY_EXT` 逐字对应（只收本腿四种样本用得到的那几格）。
+ *
+ * ★ 为什么是扩展名而不是读库：`media_assets.mime` 对 original/audio16k
+ * **刻意保持 NULL**（`transcribe.ts` 有一整段论证），由 `/media` 的 `guessMime()` 兜底。
+ * 「顺手把 mime 补上真值」正是那段论证点名的缺陷 —— 上传那条路的 contentType
+ * 来自浏览器 multipart 里的一行字（本脚本发的就是 `application/octet-stream`），
+ * 真填进去 **mp3 反而变得不可播**。
+ */
+export const MIME_BY_EXT = Object.freeze({
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.mp4': 'video/mp4',
+});
+
+/** `guessMime()` 认不出扩展名时的兜底值。**浏览器不会播它。** */
+export const GENERIC_MIME = 'application/octet-stream';
+
+/**
+ * 一个文件名对应的期望 Content-Type；表里没有的回 `null` = **本例不比对**。
+ *
+ * ⚠️ 回 `null` 而不是回 `GENERIC_MIME`：认不出扩展名时我们**不知道**答案，
+ * 而"不知道"绝不能被写成一个具体的期望值 —— 那会把一条没验到的边变成一条恒红的断言。
+ */
+export function expectedContentType(fileName) {
+  const n = String(fileName ?? '');
+  const i = n.lastIndexOf('.');
+  return (i >= 0 ? MIME_BY_EXT[n.slice(i).toLowerCase()] : undefined) ?? null;
+}
 
 /** HTTP：Range 请求成功那一档。 */
 export const STATUS_PARTIAL_CONTENT = 206;
@@ -464,36 +515,81 @@ export function pickVadModels(models, maxBytes = 250 * 1024 * 1024) {
 /* ══════════════════════════════════════════════════════════════════════════ */
 
 /**
+ * 一个路径是不是**真的落在**某个根底下。
+ *
+ * ## ✅ 这是 `isWithinImportRoots()` 的判据，逐条照搬（Manager 2026-09-06 裁决 ③-b）
+ *
+ * `apps/daemon/src/http/rest/notes.ts` 里那个函数记着一次 **Windows 上本地文件导入
+ * 100% 不可用** 的事故：老写法是 `real === root || real.startsWith(root + '/')`，
+ * **硬编码 POSIX 分隔符** ⇒ `C:\…\data\jfk.wav` 永远匹配不上 `C:\…\data/` ⇒
+ * 一个就放在 dataDir 里的文件被判 `403 PATH_NOT_ALLOWED`。
+ *
+ * 修法有三处，一处都不能少 —— 这里**不另起一套**，逐条照它：
+ *
+ *   1. **用 `relative()`，不用 `startsWith`**：`startsWith(root)` 对
+ *      `/data-x` vs `/data`（前缀相同但不是子路径）是错的，`root + sep` 又硬编码分隔符。
+ *      判据统一成「相对路径为空、或不以 `..` 开头且不是绝对路径」。
+ *   2. **`platform` 是入参，不是 `process.platform`**：宿主绑定的判断在本机 Linux 上
+ *      **测不出来**，而这个 bug 恰恰只在别的平台上显形。参数化之后本机就能把两边都测到
+ *      （`selftest-e2e-import.mjs` 里 win32 / posix 各一组）。
+ *   3. **两边都先 `resolve()`**：`storeRoot` 来自
+ *      `process.env.OPENMEMO_MODELS ?? join(dataDir, 'models')` —— 走 env 那一支时
+ *      它**没有被归一化过**，而候选路径是 `join()` 出来的。不 resolve 就是在比
+ *      两种不同写法的同一个目录。
+ *
+ * ⚠️ 这就是那个坑的**第二次**，第一次在产品侧（导入路由），这次在**守卫**侧。
+ */
+export function isUnderRoot(root, candidate, platform = process.platform) {
+  const p = platform === 'win32' ? win32 : posix;
+  const real = p.resolve(String(candidate));
+  const rel = p.relative(p.resolve(String(root)), real);
+  return rel === '' || (!rel.startsWith('..') && !p.isAbsolute(rel));
+}
+
+/**
  * 造样本用的 ffmpeg 是**产品自己下载并校验的那一份**，不是宿主借的。
  *
- * ## 🔴 已登记空转（②）：**第二格今天不可能红**
+ * ## ✅ 已修（#98 抓到的 ⑤-b，Manager 2026-09-06 裁决"两件事都修"）
  *
- * `PRODUCT_FFMPEG` 是 `findUnder(STORE_ROOT, 'ffmpeg')` 的返回值，而 `findUnder`
- * 的每一个候选都是 `join(<STORE_ROOT 下的某个目录>, name)` —— **它在结构上只会
- * 返回 storeRoot 底下的路径**。于是 `found.startsWith(storeRoot)` 恒真，
- * 那句「这就是"借宿主的"」的报错**一次都不可能打印出来**。
+ * ### (b) 真伤：它响起来的那天说的是假话
  *
- * 「产品真的借了宿主的 ffmpeg」这个缺陷状态，落到这条判据上长的是**第一格**的样子
- * （storeRoot 里找不到）。也就是说第二格不是错的，是**多余的**，而它写得像一条护栏。
- * 第①类失效：断言的东西在缺陷状态下也成立。
+ * 老写法 `found.startsWith(storeRoot)` 与产品侧那次 Windows 事故**同一个坑**。
+ * 现在走 `isUnderRoot()`（`relative()` + `platform` 入参 + 两边 resolve），
+ * 见上面那个函数的注释。
  *
- * ⚠️ 更糟的一半：它**真的响起来的那一天，说的是假话**。`storeRoot` 来自
- * `process.env.OPENMEMO_MODELS ?? join(dataDir, 'models')` —— 走 env 那一支时
- * 它**没有被 `join` 归一化过**。Windows 上 `OPENMEMO_MODELS=C:/x/models` 会让
- * `join` 产出 `C:\x\models\…`，前缀比对当场为假 ⇒ 报「借宿主的」，而它就在 storeRoot 里。
- * **这正是 `notes.ts:120-141` 记着的那次事故**（`root + '/'` 拼前缀比对），
- * 同一个坑，出现在**守卫**这一侧。
+ * ### (a) 空转：这一格此前**问错了问题**
  *
- * ⇒ 修法要么删掉第二格、要么改成 `resolve()` 之后再比（或 `relative()` 不以 `..` 开头）。
- *   两者都是「改判什么」，**本轮不改**，等 owner 裁。桩在 `selftest-e2e-import.mjs` ⑤-b。
+ * 调用方传的 `found` 是 `findUnder(storeRoot, 'ffmpeg')` 的返回值，而 `findUnder`
+ * 的每一个候选都是 `join(<storeRoot 下的某个目录>, name)` —— **它在结构上只会
+ * 返回 storeRoot 底下的路径**。也就是说这一格问的是「**storeRoot 底下有没有**」，
+ * 而它自称问的是「**它在不在 storeRoot 底下**」。两个问题不一样。
+ *
+ * ⇒ 现在判据吃的是 **realpath 之后**的路径（调用方用 `realpathSync` 解开），
+ *   于是它真的能红一次有意义的：**storeRoot 里放一个指向 `/usr/bin/ffmpeg` 的软链**。
+ *   `findUnder` 用 `readdirSync(withFileTypes)`，软链不是目录、`accessSync(X_OK)`
+ *   穿过软链成功 ⇒ 老判据看到一个 storeRoot 打头的字符串，报「产品自己下载并校验的
+ *   那一份」，**而那正是宿主那个**。这是「借宿主的」在磁盘上真实的样子之一。
+ *
+ * ⚠️ 另一半（「**产品自己**跑的时候用的是哪个 ffmpeg」）不在这里，在 §12：
+ *   `classifyToolChecks()` 读的是产品**自己的**结构化判决（`tool.ffmpeg` 的 status）。
+ *   这一格管的是「**审计拿来造样本**的那一份」—— 两者是不同的问题，都要有人问。
  */
-export function checkToolUnderStoreRoot({ found, storeRoot, name, whyNeeded }) {
+export function checkToolUnderStoreRoot({
+  found,
+  realFound,
+  storeRoot,
+  name,
+  whyNeeded,
+  platform,
+}) {
   return all([
     () => must(!!found, `storeRoot 里找不到 ${name} —— ${whyNeeded}。storeRoot=${storeRoot}`),
     () =>
       must(
-        String(found).startsWith(String(storeRoot)),
-        `找到的 ${name} 不在 storeRoot 底下（${found}）—— 这就是"借宿主的"`,
+        isUnderRoot(storeRoot, realFound ?? found, platform),
+        `找到的 ${name} 不在 storeRoot 底下（${found}${
+          realFound && realFound !== found ? ` → 真实路径 ${realFound}` : ''
+        }）—— 这就是"借宿主的"`,
       ),
   ]);
 }
@@ -611,30 +707,34 @@ export function checkUploadQueued({ status, body }) {
 /**
  * `media.ready.hasVideo` 必须说真话：带视频的 mp4 → true，纯音轨 → false。
  *
- * ## ★ 这条契约字段的**唯一读者**就是这一格
+ * ## ★ `hasVideo` 有真生产者，本腿是它在 CI 上的**唯一读者**
  *
- * `hasVideo` 此前是**写死的 `false`**，导入一个 mp4 也报"没有视频"。当年那个"真读者"
- * （`apps/daemon/scripts/e2e-f2.mjs`）已删 —— 它要一个外部已经跑着的 daemon，
- * 从来没有任何自动调用方。
+ * 生产者是 `apps/daemon/src/jobs/runners/transcribe.ts` 的
+ * `hasVideo: result.media.audioOnly === false`，而 `audioOnly` 是适配器**实际探到**的
+ * （`localFile.ts` / `directHttp.ts` 里 `probed.streams.every(s => s.type !== 'video')`，
+ * 走 ffprobe 的流信息，不是靠扩展名猜的）。它**此前**是写死的 `false`，
+ * 后来被改成真值 —— 而那次改动之所以没被判成"零读者可以删"，靠的就是这一格。
  *
- * ## 🔴 已登记空转（①）：**收不到事件 = 悄悄算通过**
+ * ## ✅ 已修（#98 抓到的 ⑤-a，Manager 2026-09-06 裁决"用三态，别直接改 fail"）
  *
- * 审计里那句注释写着「**收不到就如实说收不到，不当成通过**」，而代码是：
+ * 这一格**曾经是空转的**：`!ready`（收不到事件）那一支只 `say()`、不 `fail()`，
+ * `ok` 保持 true ⇒ 总表那一行照旧是「✔ 通过」。也就是说 **SSE 的事件名改一个字
+ * （或 payload 里 `noteUid` 换个名字），`mediaReady` 永远是空的，这条契约就再也
+ * 没有读者了，而没有任何东西会红。** 第①类失效（空集判通过），
+ * 叠加**注释型断言**（那一段的注释写着「收不到就如实说收不到，**不当成通过**」）。
  *
- * ```js
- * if (!ready) { say('⚠️ 没收到 media.ready …—— hasVideo 本例未验证'); }   // ← 只 say，不 fail
- * else if (ready.hasVideo !== wantVideo) { fail(…); ok = false; }
- * ```
+ * ## ⚠️ 修法**不是**改成 `fail`（裁决逐字）
  *
- * `ok` 保持为 true ⇒ 总表那一行照旧是「✔ 通过」。也就是说：
- * **SSE 的事件名改一个字（或 payload 里 `noteUid` 换个名字），`mediaReady` 永远是空的，
- * 这条契约就再也没有读者了，而没有任何东西会红。** 第①类失效（空集判通过），
- * 叠加**注释型断言**（注释声称的行为与代码不符）。
+ * 「SSE 没收到」可能是**真的未决**（时序、连接抖动、事件在断言窗口之后才到）。
+ * 把未决判成失败是**另一种说假话** —— 而且是会被学会无视的那一种。
  *
- * ⇒ 修法是把 `!ready` 那一支接进 `fail()`（或接进 `--undecided` 那条管道）。
- *   两者都是「改判什么」，**本轮不改**。这里给它一个有名字的第三态，
- *   让缺口在类型上说得出口；审计侧照旧只 `say()`，行为逐字不变。
- *   桩在 `selftest-e2e-import.mjs` ⑤-a。
+ * 判据因此是「**这一格有没有资格说『通过』**」：收不到 ⇒ 它没资格，
+ * 报第三态并**计入未决计数**（`--undecided-out` → `sum-undecided.mjs` → 凭证），
+ * **不是绿**。这正是 `--undecided` 这条管道当初要消灭的东西
+ * （`null` vs `0`：没查 vs 查过了确实没有）。
+ *
+ * ⚠️ 调用方**必须**三支都写。只写 `if (!v.ok)` 会把未决重新读成失败，
+ *    只写 `if (v.ok)` 会把未决重新读成通过 —— 两个方向都有自检用例钉着。
  *
  * @returns {{ok: boolean, undecided?: boolean, reason: string, reasons: string[]}}
  */
@@ -643,7 +743,9 @@ export function checkHasVideoContract({ ready, wantVideo, what }) {
     return {
       ok: false,
       undecided: true,
-      reason: `没收到 media.ready —— hasVideo 本例未验证（${what}）`,
+      reason:
+        `没收到 media.ready —— hasVideo 本例未验证（${what}）。` +
+        '这一格没资格说"通过"：计入未决，不算绿',
       reasons: [],
     };
   }
@@ -699,24 +801,46 @@ export function checkOriginalAssetReady({ asset, noteStatus }) {
 }
 
 /**
- * 整体 GET：200 + 非空 + `Accept-Ranges: bytes` + `Content-Length` 对得上。
+ * 整体 GET：200 + 非空 + `Accept-Ranges: bytes` + `Content-Length` 对 + **`Content-Type` 对**。
  *
- * ⚠️ 四格**平行**（`collect`）：抽出前是四个各自 `fail()` 的 `if`。
+ * ⚠️ 六格**平行**（`collect`）：抽出前是四个各自 `fail()` 的 `if`。
  *
- * ## ⚠️ 这里**没有** Content-Type 那一格 —— 而 `assertPlayable()` 的文档说有
+ * ## ✅ 已修（#98 抓到的 ⑤-c 的一半，Manager 2026-09-06 裁决"补上，它们本来就该在"）
  *
- * 抽出前那段文档写着「② 整体 GET → 200 + Content-Length 对 + **Content-Type 对**」，
- * 而代码里 `ctype` **只被 `say()` 打印，从来没有被判过**。
- * 第④类失效（注释型断言：注释声称一件从没发生的事）。
- * **本轮不补**（补一格 = 改这条腿判什么），登记在 ⑤-c，文档那句话也原样留着 ——
- * 顺手改掉注释会让这条缺口在下一次审计里消失，而缺口本身还在。
+ * `assertPlayable()` 的文档从第一天起就写着「② 整体 GET → 200 + Content-Length 对
+ * + **Content-Type 对**」，而代码里 `ctype` **只被 `say()` 打印，从来没有被判过**。
+ * 第④类失效（注释型断言：注释声称一件从没发生的事）。产品**做对了**，是守卫没在看。
+ *
+ * ### 它守的是产品源码里点名的那个失败面
+ *
+ * `apps/daemon/src/jobs/runners/transcribe.ts` 明写着 `media_assets.mime`
+ * **刻意保持 NULL**，由 `/media` 按扩展名 `guessMime()` 兜底，并给出理由：
+ *
+ * > 上传那条路的 `contentType` 来自浏览器 multipart 里的一行字，本脚本发的就是
+ * > `application/octet-stream`；真填进去，`/media` 就会用它替掉现在这个正确答案，
+ * > **mp3 反而变得不可播**（浏览器不认）。
+ *
+ * 也就是说：**有人"顺手补上真值"那天，用户看到的是一个点不动的播放器，
+ * 而 HTTP 全程 200。** 那正是这一格要抓的东西 ——
+ * 而在补上之前，它由一句注释和一次 `[CI 实测 run 31247374404]` 守着，仅此而已。
+ *
+ * ⚠️ `expectContentType` 传 `null` = 本例不比对（F1 走这一支：yt-dlp 可能换容器，
+ *    扩展名事先不知道）。**但第一格（头必须在）对所有调用点都成立** ——
+ *    少了它，null 那一支会整个变成一句关于空集的废话。
  *
  * ## ⚠️ `Content-Length` 那一格是**有条件**的（`clen === null` 就放过）
  *
  * 一个从此不再发 `Content-Length` 的 daemon 会静默通过这一格。它守的是"发了但发错"，
- * 守不住"不发了"。抽出前如此，这里逐字保留。
+ * 守不住"不发了"。抽出前如此，这里逐字保留（改它不在本轮裁决范围内）。
  */
-export function checkFullFetch({ status, buf, contentLength, acceptRanges }) {
+export function checkFullFetch({
+  status,
+  buf,
+  contentLength,
+  acceptRanges,
+  contentType,
+  expectContentType = null,
+}) {
   const len = buf?.length ?? 0;
   return collect([
     () =>
@@ -734,6 +858,21 @@ export function checkFullFetch({ status, buf, contentLength, acceptRanges }) {
       must(
         contentLength === null || Number(contentLength) === len,
         `Content-Length=${contentLength} 与实收 ${len} 不符`,
+      ),
+    () =>
+      must(
+        typeof contentType === 'string' && contentType.length > 0,
+        `没有 Content-Type 头（实得 ${brief(contentType)}）—— 浏览器拿它决定用哪个解码器`,
+      ),
+    () =>
+      must(
+        expectContentType === null || contentType === expectContentType,
+        `Content-Type 期望 '${expectContentType}'，拿到 '${contentType}' —— ` +
+          `${
+            contentType === GENERIC_MIME
+              ? '这是 `guessMime()` 认不出扩展名时的兜底值，浏览器不会播它'
+              : '这份媒体会以错误的解码器打开（或根本不播）'
+          }`,
       ),
   ]);
 }
@@ -804,18 +943,33 @@ export function checkSuffixRange({ status, buf, fullBuf, n, size }) {
 }
 
 /**
- * 不可满足的 Range（`bytes=<size+100>-`）→ **416**。
+ * 不可满足的 Range（`bytes=<size+100>-`）→ **416** + `Content-Range: bytes * /<size>`。
  *
- * ## ⚠️ 只钉状态码 —— `Content-Range: bytes * /size` 那一半**没有被验**
+ * ## ✅ 已修（#98 抓到的 ⑤-c 的另一半，同一条裁决）
  *
- * `assertPlayable()` 的文档写着「⑥ 不可满足的 Range → **416** +
- * `Content-Range: bytes * /size`」，而代码只比了 `r3.status !== 416`。
- * 与 Content-Type 那一格同族（第④类：注释型断言）。
- * `apps/daemon/src/http/media.ts` 今天确实发了那个头 —— 也就是说这是一条
- * **产品做对了、而守卫没在看**的边。**本轮不补**，登记在 ⑤-c。
+ * 文档从第一天起写着「⑥ 不可满足的 Range → **416** + `Content-Range: bytes * /size`」，
+ * 而代码只比了 `r3.status !== 416`。`apps/daemon/src/http/media.ts` 今天**确实**
+ * 逐字发了那个头 —— 又一条**产品做对了、而守卫没在看**的边。
+ *
+ * ★ 那个头不是装饰：RFC 7233 要求 416 带上 `bytes * /<完整长度>`，
+ *   播放器靠它知道**真实总长**并重算下一次请求。少了它（或写错 size），
+ *   播放器会拿一个错的总长继续发 Range，表现成"拖到后面就卡住"，而 HTTP 全程合法。
+ *
+ * ⚠️ `expectSize` 传 `null` = 只钉状态码（**没有调用点这样传**；
+ *    自检里有一条 `☑ 独占` 用例正面钉住"不比 size 就抓不住写错的总长"）。
  */
-export function checkUnsatisfiableRange({ status }) {
-  return must(status === STATUS_RANGE_NOT_SATISFIABLE, `越界 Range 期望 416，拿到 ${status}`);
+export function checkUnsatisfiableRange({ status, contentRange, expectSize = null }) {
+  return collect([
+    () => must(status === STATUS_RANGE_NOT_SATISFIABLE, `越界 Range 期望 416，拿到 ${status}`),
+    () =>
+      expectSize === null
+        ? yes()
+        : must(
+            contentRange === `bytes */${expectSize}`,
+            `越界 Range 的 Content-Range 期望 'bytes */${expectSize}'，拿到 '${contentRange}' —— ` +
+              '播放器靠这个头拿真实总长，写错了会表现成"拖到后面就卡住"',
+          ),
+  ]);
 }
 
 /** `role='audio16k'` 的资产在（波形/时间轴联动 F5 的素材）。 */
@@ -906,41 +1060,19 @@ export function parseFixtureRange(rangeHeader, total) {
   return { start, end, total };
 }
 
-/**
- * **有人真的来取过这个链接** —— 「产品到底有没有出去取」的硬证据。
- *
- * ⚠️ 这是 §11 里**唯一**会 `fail()` 的一格。见下面 `classifyFetcher()`。
+/*
+ * ⚠️ 这里原来有一个 `checkFixtureWasFetched({ hits })`（「有人来取过吗」）。
+ *    它被 `checkFetchedByYtdlp()` 的**第一格**原样吸收了 —— 留着两个入口会让
+ *    调用方有机会只用弱的那个，而"只问有没有人来取"正是 ⑤-d 那条空转的形状。
  */
-export function checkFixtureWasFetched({ hits }) {
-  return must(
-    (hits ?? []).length > 0,
-    '★ fixture 服务器一个请求都没收到 —— 产品根本没去取这个链接',
-  );
-}
 
 /**
- * 取回方是谁 —— **今天只是观测，不进判决**。
+ * 取回方是谁：`none`（没人来取）/ `ytdlp` / `other`（来了，但不是站点解析器）。
  *
- * ## 🔴 已登记空转（③）：这一格看起来像判据，其实一个字都不判
- *
- * 抽出前那段注释写着「**改用产品自己的答案**：`/api/notes/probe` 的 `adapterId`」，
- * 读起来像是判据从 UA 换成了 `adapterId`。**没有。** 代码是：
- *
- * ```js
- * if (fixtureHits.length === 0) fail(…);              // ← 只有这一条会红
- * else if (probeAdapter === 'yt-dlp') say('✔ …');
- * else say(`ⓘ 产品报告的解析者是 ${probeAdapter} …`);   // ← 不是 yt-dlp 也照样绿
- * ```
- *
- * 于是：registry 的 fallback 链哪天变了（或者 `adapterId` 这个字段改名 ⇒ 恒为
- * `null`），F1 仍然全绿，而 workflow 与审计文件头里那句「**验到了 yt-dlp 那一段**」
- * 会从那天起是假话。第①类（缺陷状态下断言照样成立）叠第④类（注释声称的判据不存在）。
- *
- * ⚠️ 这条腿在 CI 上的唯一价值就是「粘链接 → 站点解析器真的被 spawn 起来取回」。
- *    `fixtureHits > 0` 只证明了**有人**去取过 —— DirectHttpSource 去取也满足它。
- *
- * ⇒ 修法是把 `kind !== 'ytdlp'` 接进 `fail()`。**本轮不改**（改了这条腿在
- *   fallback 链变化时会红，那是一个判决变更）。桩在 `selftest-e2e-import.mjs` ⑤-d。
+ * 判据是**产品自己的答案**（`/api/notes/probe` 的 `adapterId`），不是 User-Agent：
+ * yt-dlp **默认伪装成浏览器**且每次轮换版本号（本机实测四条分别是 Chrome/150、145、
+ * 146、146）。拿 UA 认它会稳定地说"取回方不像 yt-dlp"，而它明明就是 ——
+ * **一条永远给错答案的证据比没有证据更糟。**
  *
  * @returns {{kind: 'none'|'ytdlp'|'other', adapterId: string|null, hits: number}}
  */
@@ -949,6 +1081,54 @@ export function classifyFetcher({ probeAdapter, hits }) {
   const adapterId = probeAdapter ?? null;
   if (n === 0) return { kind: 'none', adapterId, hits: n };
   return { kind: adapterId === YTDLP_ADAPTER_ID ? 'ytdlp' : 'other', adapterId, hits: n };
+}
+
+/**
+ * ★★ 这条链**真的走到了站点解析器那一支**（F1 存在的全部理由）。
+ *
+ * ## ✅ 已修（#98 抓到的 ⑤-d，Manager 2026-09-06 裁决"放进判决"）
+ *
+ * 这一格**曾经一个字都不判**：抽出前那段注释写着「**改用产品自己的答案**：
+ * `/api/notes/probe` 的 `adapterId`」，读起来像判据从 UA 换成了 `adapterId`。
+ * 而代码是：
+ *
+ * ```js
+ * if (fixtureHits.length === 0) fail(…);              // ← 只有这一条会红
+ * else if (probeAdapter === 'yt-dlp') say('✔ …');
+ * else say(`ⓘ 产品报告的解析者是 ${probeAdapter} …`);   // ← 不是 yt-dlp 也照样绿
+ * ```
+ *
+ * 第①类（缺陷状态下断言照样成立）叠第④类（注释声称的判据不存在）。
+ *
+ * ## ⚠️ 要害：`hits > 0` 断的是「**有没有人**」，不是「**是谁**」
+ *
+ * DirectHttpSource 去取也让 `fixtureHits` 涨。所以那一格证明不了
+ * `e2e-import.yml` 与审计文件头里那句「验到了 yt-dlp 那一段」——
+ * registry 的 fallback 链变了、或 `adapterId` 改名（⇒ 恒为 `null`），F1 仍然全绿，
+ * 而那句话从那天起是假话。
+ *
+ * ⇒ 现在断的是**哪个适配器**。两格缺一不可：
+ *   · 没人来取     ⇒ 产品根本没出去（`kind: 'none'`）；
+ *   · 来了但不是它 ⇒ 走的不是这条腿自称验的那一支（`kind: 'other'`）。
+ *
+ * ⚠️ 这**是**一个判决变更（fallback 链变化时它会红）—— 那正是裁决要的：
+ *    链变了必须有人当场知道，而不是让文件头那句话悄悄变成假话。
+ *    改产品的取回顺序时，**这一格红了先改这里的期望，再改文档**，别删掉它。
+ */
+export function checkFetchedByYtdlp({ probeAdapter, hits }) {
+  const f = classifyFetcher({ probeAdapter, hits });
+  return all([
+    () => must(f.kind !== 'none', '★ fixture 服务器一个请求都没收到 —— 产品根本没去取这个链接'),
+    () =>
+      must(
+        f.kind === 'ytdlp',
+        `产品报告的解析者是 ${brief(f.adapterId)}，不是 ${YTDLP_ADAPTER_ID} —— ` +
+          `fixture 被取了 ${f.hits} 次，但**取的不是站点解析器那一支**。` +
+          'F1 自称验的就是那一支（registry 的 fallback 链：DirectHttp 先试、' +
+          '因 assertHostNotPrivate 解到回环而拒绝、落到 yt-dlp）。' +
+          '链变了就在这里说出来，别让文件头那句话悄悄变成假话',
+      ),
+  ]);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

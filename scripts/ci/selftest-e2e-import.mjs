@@ -34,13 +34,15 @@
  *      **抽掉任意一格修法，这一组都要红。**（打 `☑ 独占` 的那些就是为逐格补的。）
  *   ②-bis **`SUBSUMED_LEGS_IMPORT` 的登记还对得上判据源码吗** ——
  *      `leg-coverage.mjs --leg import` 的门禁那一半，秒级。
- *      `[实测 2026-09-06，本 PR]` **14 格 → 12 格有专属坏输入**（打 `☑ 独占` 的那些
- *      就是为补齐它们加的）；剩 2 格删掉之后自检**照样绿** —— 因为②表里那两个坏输入
- *      都会被**相邻那一格先判红**，没有用例专门盯着它们。它们不是空转
- *      （缺陷仍会被相邻那格抓住），是**数学上被吞掉**，理由逐条记在
- *      `SUBSUMED_LEGS_IMPORT` 里。**0 格「删了就崩」** ——
- *      ⚠️ 报覆盖率时**三栏都要念**：只念 12/14 会把"判不了"混进"没覆盖"、
+ *      `[实测 2026-09-06，四条空转全修那一轮]` **20 格 → 17 格有专属坏输入**
+ *      （打 `☑ 独占` 的那些就是为补齐它们加的）；剩 3 格删掉之后自检**照样绿** ——
+ *      因为②表里那几个坏输入都会被**相邻那一格先判红**，没有用例专门盯着它们。
+ *      它们不是空转（缺陷仍会被相邻那格抓住），是**数学上被吞掉**，
+ *      理由逐条记在 `SUBSUMED_LEGS_IMPORT` 里。**0 格「删了就崩」** ——
+ *      ⚠️ 报覆盖率时**三栏都要念**：只念 17/20 会把"判不了"混进"没覆盖"、
  *      把"没覆盖"混进"有覆盖"，两个方向都失真。
+ *      ⚠️ 上一轮是 14 格 / 12 覆盖 —— 格子多出来的 6 个不是"补了用例"，
+ *      是**判据真的多了几格**（④ 补的两格 + ② 的两格 + ③ 改写那两格）。
  *   ③ ★ **把判据在内存里退化，看它是不是真的还抓得住** ——
  *      把"修法抽掉之后的那一版"原样写在这里、喂同样的坏输入，
  *      要求**退化版放过、现行版抓住**。②只证明现行版会红，
@@ -58,7 +60,7 @@
  * 用法：`node scripts/ci/selftest-e2e-import.mjs`（已挂进 `pnpm test:ci-scripts`）
  */
 import { strict as assert } from 'node:assert';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -66,8 +68,10 @@ import {
   ALL_FIXTURE_KINDS,
   ASSET_ROLES,
   ASSET_STATE_READY,
+  GENERIC_MIME,
   H264_ENCODERS,
   JOB_TERMINAL_STATES,
+  MIME_BY_EXT,
   LOOPBACK_ADDRESSES,
   REQUIRED_PACK_PREFIXES,
   STATUS_ACCEPTED,
@@ -87,7 +91,7 @@ import {
   checkDaemonPidIdentity,
   checkFixtureBuilt,
   checkFixtureHostLoopback,
-  checkFixtureWasFetched,
+  checkFetchedByYtdlp,
   checkFullFetch,
   checkH264EncoderAvailable,
   checkHasVideoContract,
@@ -107,7 +111,9 @@ import {
   classifyInstallAttempt,
   classifyJobPoll,
   classifyToolChecks,
+  expectedContentType,
   flattenModelCatalog,
+  isUnderRoot,
   isWhisperCppModel,
   missingFixtureKinds,
   modelSizeBytes,
@@ -133,9 +139,15 @@ const ok = (name) => {
   cases += 1;
   say(`  ✔ ${name}`);
 };
-const bad = (name, why) => {
+/**
+ * 一条失败的**结构化**记录。`kind` 是给 `leg-coverage.mjs` 分档用的 ——
+ * 它此前靠匹配报错文本里的中文来认「红的只是记录守卫」，那是在读散文。
+ */
+const failed = [];
+const bad = (name, why, kind = 'assertion') => {
   cases += 1;
   failures += 1;
+  failed.push({ name, kind });
   say(`  ✘ ${name}\n      ${why}`);
 };
 
@@ -183,6 +195,8 @@ const fullOk = {
   buf: MEDIA,
   contentLength: String(SIZE),
   acceptRanges: 'bytes',
+  contentType: 'audio/mpeg',
+  expectContentType: 'audio/mpeg',
 };
 const prefixOk = {
   status: STATUS_PARTIAL_CONTENT,
@@ -265,9 +279,23 @@ green(
   'checkToolUnderStoreRoot：在 storeRoot 底下',
   checkToolUnderStoreRoot({
     found: '/store/media-tools/bin/ffmpeg',
+    realFound: '/store/media-tools/bin/ffmpeg',
     storeRoot: '/store',
     name: 'ffmpeg',
     whyNeeded: '造样本',
+    platform: 'linux',
+  }),
+);
+green(
+  '★ checkToolUnderStoreRoot：storeRoot 用了未归一化的写法（就是那个真伤）',
+  checkToolUnderStoreRoot({
+    found: 'C:\\x\\models\\media-tools\\ffmpeg.exe',
+    realFound: 'C:\\x\\models\\media-tools\\ffmpeg.exe',
+    // env 传进来的那种写法：正斜杠、没被 join() 归一化过
+    storeRoot: 'C:/x/models',
+    name: 'ffmpeg',
+    whyNeeded: '造样本',
+    platform: 'win32',
   }),
 );
 green('checkH264EncoderAvailable：探到了', checkH264EncoderAvailable({ encoder: 'libx264' }));
@@ -305,8 +333,12 @@ green(
 green('checkPrefixRange：206 + Content-Range + 字节一致', checkPrefixRange(prefixOk));
 green('checkSuffixRange：206 + 尾部字节一致', checkSuffixRange(suffixOk));
 green(
-  'checkUnsatisfiableRange：416',
-  checkUnsatisfiableRange({ status: STATUS_RANGE_NOT_SATISFIABLE }),
+  'checkUnsatisfiableRange：416 + Content-Range 对',
+  checkUnsatisfiableRange({
+    status: STATUS_RANGE_NOT_SATISFIABLE,
+    contentRange: `bytes */${SIZE}`,
+    expectSize: SIZE,
+  }),
 );
 green('checkAudio16kPresent：在', checkAudio16kPresent({ asset: a16Asset }));
 green(
@@ -338,8 +370,8 @@ for (const addr of LOOPBACK_ADDRESSES) {
   );
 }
 green(
-  'checkFixtureWasFetched：收到过请求',
-  checkFixtureWasFetched({ hits: [{ url: '/clip.mp4' }] }),
+  'checkFetchedByYtdlp：来了、而且是 yt-dlp',
+  checkFetchedByYtdlp({ probeAdapter: YTDLP_ADAPTER_ID, hits: [{ url: '/clip.mp4' }] }),
 );
 green('checkNothingBorrowed：一个都没借', checkNothingBorrowed({ borrowed: [] }));
 
@@ -418,6 +450,28 @@ green('checkNothingBorrowed：一个都没借', checkNothingBorrowed({ borrowed:
   const missing = missingFixtureKinds({ made: ALL_FIXTURE_KINDS.map((k) => k.name) });
   if (missing.length === 0) ok('missingFixtureKinds：四个都造出来了 ⇒ 不补行');
   else bad('missingFixtureKinds', brief(missing));
+}
+{
+  for (const [ext, mime] of Object.entries(MIME_BY_EXT)) {
+    const got = expectedContentType(`f2-sample${ext}`);
+    if (got === mime) ok(`expectedContentType：${ext} ⇒ ${mime}`);
+    else bad('expectedContentType', `${ext} 期望 ${mime}，实得 ${brief(got)}`);
+  }
+  if (expectedContentType('f2-sample.MP3') === MIME_BY_EXT['.mp3'])
+    ok('expectedContentType：大写扩展名也认（`guessMime()` 也是 toLowerCase 的）');
+  else bad('expectedContentType', '大写扩展名没认出来');
+  /*
+   * ★ 认不出来时回 `null`（= 本例不比对），**不是**回 `GENERIC_MIME`。
+   *   回兜底值会把"我们不知道答案"写成一个具体的期望值 ——
+   *   那正是把一条没验到的边变成一条恒红断言的做法。
+   */
+  if (expectedContentType('clip.weird') === null && expectedContentType('noext') === null)
+    ok('★ ☑ 独占 expectedContentType：认不出扩展名 ⇒ null（不许凭空写一个期望值）');
+  else
+    bad(
+      'expectedContentType',
+      `认不出扩展名时该回 null，实得 ${brief(expectedContentType('clip.weird'))}`,
+    );
 }
 if (
   verdictMark(true) === '✔ 通过' &&
@@ -533,17 +587,90 @@ red(
     storeRoot: '/store',
     name: 'ffmpeg',
     whyNeeded: '造样本',
+    platform: 'linux',
   }),
 );
 red(
-  '☑ 独占 checkToolUnderStoreRoot：找到了但不在 storeRoot 底下（第 2 格 —— 见 ⑤-b，今天不可达）',
+  '★ ☑ 独占 checkToolUnderStoreRoot：storeRoot 里那个 ffmpeg 是**指向宿主的软链**（⑤-b (a) 修的就是它）',
   checkToolUnderStoreRoot({
-    found: '/usr/bin/ffmpeg',
+    found: '/store/media-tools/bin/ffmpeg',
+    realFound: '/usr/bin/ffmpeg',
     storeRoot: '/store',
     name: 'ffmpeg',
     whyNeeded: '造样本',
+    platform: 'linux',
   }),
 );
+red(
+  '☑ 独占 checkToolUnderStoreRoot：前缀相同但不是子路径（/store-x vs /store）',
+  checkToolUnderStoreRoot({
+    found: '/store-x/ffmpeg',
+    realFound: '/store-x/ffmpeg',
+    storeRoot: '/store',
+    name: 'ffmpeg',
+    whyNeeded: '造样本',
+    platform: 'linux',
+  }),
+);
+
+/* ── isUnderRoot：③-b 那个真伤的两个平台各一组（`platform` 是入参才测得到） ── */
+{
+  const cases = [
+    ['posix', 'linux', '/store', '/store/a/ffmpeg', true, '正常的子路径'],
+    ['posix', 'linux', '/store', '/store', true, '根自己'],
+    [
+      'posix',
+      'linux',
+      '/store',
+      '/store-x/ffmpeg',
+      false,
+      '★ 前缀相同但不是子路径（startsWith 会答错）',
+    ],
+    ['posix', 'linux', '/store', '/usr/bin/ffmpeg', false, '完全在别处'],
+    ['posix', 'linux', '/store/', '/store/a/ffmpeg', true, '根带尾斜杠'],
+    [
+      'win32',
+      'win32',
+      'C:/x/models',
+      'C:\\x\\models\\a\\ffmpeg.exe',
+      true,
+      '★★ 就是那个真伤：env 给正斜杠、join 给反斜杠',
+    ],
+    [
+      'win32',
+      'win32',
+      'C:\\x\\models',
+      'C:\\x\\models-old\\ffmpeg.exe',
+      false,
+      'Windows 上的前缀相同但不是子路径',
+    ],
+    ['win32', 'win32', 'C:\\x\\models', 'D:\\ffmpeg.exe', false, '另一个盘'],
+  ];
+  for (const [flavor, platform, root, cand, want, why] of cases) {
+    const got = isUnderRoot(root, cand, platform);
+    if (got === want) ok(`isUnderRoot[${flavor}]：${why}`);
+    else
+      bad(
+        `isUnderRoot[${flavor}]`,
+        `${why} —— 期望 ${want}，实得 ${got}（root=${root} cand=${cand}）`,
+      );
+  }
+  /*
+   * ★ **平台必须是入参**（照 `isWithinImportRoots` 的原修法）：
+   *   同一份输入在两个平台上答案不同 —— 这一条正面证明 platform 真的在起作用。
+   *   写死 `process.platform` 的话，这个 bug 在本机 Linux 上**测不出来**，
+   *   而它恰恰只在 Windows 上显形。
+   */
+  const winAnswer = isUnderRoot('C:/x/models', 'C:\\x\\models\\ffmpeg.exe', 'win32');
+  const posixAnswer = isUnderRoot('C:/x/models', 'C:\\x\\models\\ffmpeg.exe', 'linux');
+  if (winAnswer === true && posixAnswer === false)
+    ok('★ isUnderRoot：platform 是入参，同一份输入两个平台答案不同（本机就能把 Windows 那半测到）');
+  else
+    bad(
+      'isUnderRoot 的 platform 入参',
+      `win32=${winAnswer} posix=${posixAnswer} —— 期望 true/false。两边一样说明 platform 没起作用`,
+    );
+}
 
 /* ── §7 造样本 ───────────────────────────────────────────────────────────── */
 for (const name of H264_ENCODERS) {
@@ -637,19 +764,44 @@ red(
   '☑ 独占 checkFullFetch：Content-Length 与实收不符',
   checkFullFetch({ ...fullOk, contentLength: String(SIZE + 1) }),
 );
+red(
+  '★ ☑ 独占 checkFullFetch：Content-Type 是 application/octet-stream（⑤-c 补的那格）',
+  checkFullFetch({ ...fullOk, contentType: GENERIC_MIME }),
+);
+red(
+  '☑ 独占 checkFullFetch：mp3 却发成了 video/mp4（发了、但发错）',
+  checkFullFetch({ ...fullOk, contentType: 'video/mp4' }),
+);
+red(
+  '☑ 独占 checkFullFetch：根本没有 Content-Type 头（这一格对 F1 那条 null 路径也生效）',
+  checkFullFetch({ ...fullOk, contentType: null, expectContentType: null }),
+);
+green(
+  '☑ 独占 checkFullFetch：expectContentType=null ⇒ 不比对具体值（F1 走这一支）',
+  checkFullFetch({ ...fullOk, contentType: 'video/webm', expectContentType: null }),
+);
 {
   const v = checkFullFetch({
     status: 500,
     buf: Buffer.alloc(0),
     contentLength: '7',
     acceptRanges: null,
+    contentType: null,
+    expectContentType: 'audio/mpeg',
   });
-  if (!v.ok && v.reasons.length === 4)
-    ok('☑ 独占 checkFullFetch（collect 语义）：四格全坏 ⇒ 报 4 条，不是短路成 1 条');
+  /*
+   * ⚠️ 期望的是 **5** 不是 6：最后一格（具体值对不对）在 `contentType` 为 null 时
+   *    也不成立，但它与"头缺失"那格说的是同一件事的两个层次 —— 这里数的是
+   *    **真的会打印出来的行数**，写死一个"格子总数"会在加格子的那天变成一句假话。
+   *    这条用例钉的是 `collect` 语义（不短路），不是格子的个数。
+   */
+  const wantAll = 6;
+  if (!v.ok && v.reasons.length === wantAll)
+    ok(`☑ 独占 checkFullFetch（collect 语义）：六格全坏 ⇒ 报 ${wantAll} 条，不是短路成 1 条`);
   else
     bad(
       'checkFullFetch（collect 语义）',
-      `期望 4 条理由，实得 ${v.reasons.length}：${brief(v.reasons)}`,
+      `期望 ${wantAll} 条理由，实得 ${v.reasons.length}：${brief(v.reasons)}`,
     );
 }
 red(
@@ -676,11 +828,38 @@ red(
 );
 red(
   'checkUnsatisfiableRange：越界却回 206',
-  checkUnsatisfiableRange({ status: STATUS_PARTIAL_CONTENT }),
+  checkUnsatisfiableRange({
+    status: STATUS_PARTIAL_CONTENT,
+    contentRange: `bytes */${SIZE}`,
+    expectSize: SIZE,
+  }),
 );
 red(
   'checkUnsatisfiableRange：越界却回 200（把整个文件又发了一遍）',
-  checkUnsatisfiableRange({ status: 200 }),
+  checkUnsatisfiableRange({ status: 200, contentRange: null, expectSize: SIZE }),
+);
+red(
+  '★ ☑ 独占 checkUnsatisfiableRange：416 对、但 Content-Range 里的总长写错了（⑤-c 补的那格）',
+  checkUnsatisfiableRange({
+    status: STATUS_RANGE_NOT_SATISFIABLE,
+    contentRange: `bytes */${SIZE + 999}`,
+    expectSize: SIZE,
+  }),
+);
+red(
+  '☑ 独占 checkUnsatisfiableRange：416 对、但根本没发 Content-Range',
+  checkUnsatisfiableRange({
+    status: STATUS_RANGE_NOT_SATISFIABLE,
+    contentRange: null,
+    expectSize: SIZE,
+  }),
+);
+green(
+  '☑ 独占 checkUnsatisfiableRange：expectSize=null ⇒ 退回只钉状态码（没有调用点这样传）',
+  checkUnsatisfiableRange({
+    status: STATUS_RANGE_NOT_SATISFIABLE,
+    contentRange: 'bytes */whatever',
+  }),
 );
 red('checkAudio16kPresent：没有这份资产', checkAudio16kPresent({ asset: undefined }));
 red('checkAudio16kFetched：404', checkAudio16kFetched({ status: 404, buf: Buffer.alloc(0) }));
@@ -725,7 +904,18 @@ red(
   '☑ 独占 checkFixtureHostLoopback：解析到了，但是个**公网**地址（那就真出网了）',
   checkFixtureHostLoopback({ host: 'x.test', address: '93.184.216.34' }),
 );
-red('checkFixtureWasFetched：一个请求都没收到', checkFixtureWasFetched({ hits: [] }));
+red(
+  'checkFetchedByYtdlp：一个请求都没收到（第 1 格）',
+  checkFetchedByYtdlp({ probeAdapter: null, hits: [] }),
+);
+red(
+  '★ ☑ 独占 checkFetchedByYtdlp：**有人取了，但不是 yt-dlp**（⑤-d 修的就是它）',
+  checkFetchedByYtdlp({ probeAdapter: 'direct-http', hits: [{}, {}] }),
+);
+red(
+  '☑ 独占 checkFetchedByYtdlp：取了，但 adapterId 这个字段没了（恒 null）',
+  checkFetchedByYtdlp({ probeAdapter: null, hits: [{}] }),
+);
 {
   if (parseFixtureRange('bytes=200-', 100)?.unsatisfiable === true)
     ok('parseFixtureRange：start 越界 ⇒ 416');
@@ -841,9 +1031,9 @@ say('── ②-bis 「删了也绿」那几格的登记还对得上吗（`leg-c
  * ⚠️ 它**不是豁免名单**。名单里记的不是"这几格不用管"，是"这几格为什么被吞掉"，
  * 而且每一条都是**可核对的事实**（源码里恰好一处）。
  *
- * ⚠️ 报错措辞与 notes 腿逐字相同（`SUBSUMED_LEGS 对不上判据源码`）：
- * `leg-coverage.mjs` 靠这句话把「记录守卫在响」与「有一个坏输入在响」分开，
- * 换个措辞会让它把记录守卫读成覆盖率（那正是它自己踩过的坑）。
+ * ⚠️ 这一节的失败带 `kind: 'subsumed-record'` —— `leg-coverage.mjs` 靠**那个字段**
+ * （不是靠匹配这句中文）把「记录守卫在响」与「有一个坏输入在响」分开。
+ * 措辞随便改，判决不受影响；**但那个 kind 不许改**，改了那边会把记录守卫读成覆盖率。
  */
 {
   const src = readFileSync(join(REPO, 'scripts', 'ci', 'e2e-import-assertions.mjs'), 'utf8');
@@ -852,8 +1042,8 @@ say('── ②-bis 「删了也绿」那几格的登记还对得上吗（`leg-c
    * 真补齐了请连这条地板一起改（并重跑 `--leg import` 更新报告里那三栏数字）。
    */
   assert.ok(
-    SUBSUMED_LEGS_IMPORT.length >= 2,
-    `SUBSUMED_LEGS_IMPORT 只剩 ${SUBSUMED_LEGS_IMPORT.length} 条 —— 少于 2 条时多半是这份记录被清空了`,
+    SUBSUMED_LEGS_IMPORT.length >= 3,
+    `SUBSUMED_LEGS_IMPORT 只剩 ${SUBSUMED_LEGS_IMPORT.length} 条 —— 少于 3 条时多半是这份记录被清空了`,
   );
   for (const leg of SUBSUMED_LEGS_IMPORT) {
     const hits = src.split(leg.needle).length - 1;
@@ -865,6 +1055,12 @@ say('── ②-bis 「删了也绿」那几格的登记还对得上吗（`leg-c
         `源码里 ${hits} 处（期望恰好 1 处）—— 这一格被改/删/复制了。\n` +
           `      它原本是「删了也绿」的那几格之一，理由是：${leg.why}\n` +
           '      请重跑 `node scripts/ci/leg-coverage.mjs --leg import`，并更新 SUBSUMED_LEGS_IMPORT。',
+        /*
+         * ★ `kind` 是给 `leg-coverage.mjs` 分档的**结构信号**：这条红来自
+         *   **记录守卫**（它正在逐格删格子，所以这条必然响），不是来自任何一个坏输入。
+         *   它此前靠匹配上面那句中文来认，`[实测]` 因此把一格误记过。
+         */
+        'subsumed-record',
       );
     }
   }
@@ -1004,6 +1200,81 @@ degraded(
     '而那句报错读起来像"造样本失败"，不像"探测器瞎了"',
 );
 
+/* ③-i ★ 第三态 vs「收不到就算过」（⑤-a 修的那条） */
+const hasVideoTreatMissingAsPass = ({ ready, wantVideo }) =>
+  ready
+    ? { ok: ready.hasVideo === wantVideo, reason: 'x', reasons: ['x'] }
+    : { ok: true, reason: '', reasons: [] };
+{
+  const input = { ready: null, wantVideo: true, what: 'mp4' };
+  const weak = hasVideoTreatMissingAsPass(input);
+  const strong = checkHasVideoContract(input);
+  if (weak.ok && strong.ok === false && strong.undecided === true)
+    ok(
+      '★ hasVideo 第三态 vs "收不到就算过"：退化版判绿、现行版判**未决** —— ' +
+        'SSE 事件名改一个字，退化版会让这条契约悄悄没有读者',
+    );
+  else
+    bad(
+      '★ hasVideo 第三态',
+      `退化版 ok=${weak.ok}、现行版 ok=${strong.ok}/undecided=${strong.undecided} —— ` +
+        '期望「退化版绿、现行版未决」。现行版若判绿，这一格今天还是空转的',
+    );
+}
+
+/* ③-j ★ 断"哪个适配器" vs 断"有没有人来取"（⑤-d 修的那条） */
+const fetchedByAnyone = ({ hits }) => ({
+  ok: (hits ?? []).length > 0,
+  reason: 'x',
+  reasons: ['x'],
+});
+degraded(
+  '取回方判据 vs "有没有人来取"',
+  fetchedByAnyone,
+  checkFetchedByYtdlp,
+  { probeAdapter: 'direct-http', hits: [{}, {}] },
+  'DirectHttp 去取也让 fixtureHits 涨 —— 只问"有没有人"的那一版对它全绿，' +
+    '而这条腿自称验的是**站点解析器那一支**',
+);
+
+/* ③-k ★ relative() vs startsWith()（⑤-b 那个真伤，Windows 那一面） */
+const underRootByStartsWith = ({ storeRoot, realFound }) => ({
+  ok: String(realFound).startsWith(String(storeRoot)),
+  reason: 'x',
+  reasons: ['x'],
+});
+degraded(
+  'isUnderRoot vs startsWith（Windows 上那个真伤）',
+  ({ storeRoot, realFound }) => {
+    const v = underRootByStartsWith({ storeRoot, realFound });
+    // 退化版这里"红"的方向是反的：它把一个**在** storeRoot 里的文件判成借宿主的。
+    return { ok: !v.ok, reason: 'x', reasons: ['x'] };
+  },
+  ({ storeRoot, realFound, platform }) => ({
+    ok: !isUnderRoot(storeRoot, realFound, platform),
+    reason: 'x',
+    reasons: ['x'],
+  }),
+  { storeRoot: 'C:/x/models', realFound: 'C:\\x\\models\\ffmpeg.exe', platform: 'win32' },
+  '★ env 传进来的未归一化 storeRoot：`startsWith` 说"不在里面"（于是审计报「借宿主的」），' +
+    '而它就在 storeRoot 里 —— 这是**守卫说假话**，不是产品坏了',
+);
+
+/* ③-l ★ 逐格比 Content-Type vs 只看"有没有这个头" */
+const contentTypeExistsOnly = ({ contentType }) => ({
+  ok: typeof contentType === 'string' && contentType.length > 0,
+  reason: 'x',
+  reasons: ['x'],
+});
+degraded(
+  'Content-Type 逐字比 vs 只看头在不在',
+  contentTypeExistsOnly,
+  checkFullFetch,
+  { ...fullOk, contentType: GENERIC_MIME },
+  '有人"顺手把 media_assets.mime 补上真值"（上传那条路的 multipart 里写的就是 ' +
+    'application/octet-stream）⇒ mp3 变得不可播，而 HTTP 全程 200、头也在',
+);
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 say('');
 say('── ④ 契约漂移守卫：那些字面量在产品源码里还在不在（`.mjs` 拿不到类型检查）');
@@ -1085,6 +1356,33 @@ function contract(name, src, needle, why) {
     '⚠️ 顺带钉住：产品**确实**在 416 上发了 Content-Range，而判据没在看它（见 ⑤-c）',
   );
   contract('Accept-Ranges', mediaTs, `'Accept-Ranges': 'bytes'`, '播放器拖进度条靠它');
+  /*
+   * ★ Content-Type 那条链：`/media` 发的是 `asset.mime ?? guessMime(abs)`，
+   *   而 `media_assets.mime` 对 original **刻意是 NULL** ⇒ 实际发的就是扩展名判出来的那个。
+   *   这里逐格核 `MIME_BY_EXT`（本腿四种样本用得到的那几格），
+   *   少了它，`expectedContentType()` 会静默给出一个产品早就不发的期望值 ⇒ **恒红**。
+   */
+  contract(
+    'Content-Type 由 mime 或 guessMime 给',
+    mediaTs,
+    'asset.mime ?? guessMime(abs)',
+    '这条链断了 Content-Type 那两格就无从谈起',
+  );
+  for (const [ext, mime] of Object.entries(MIME_BY_EXT)) {
+    contract(`MIME_BY_EXT ${ext}`, mediaTs, `'${ext}': '${mime}'`, `扩展名判定漂了 ⇒ 期望值恒红`);
+  }
+  contract(
+    'guessMime 的兜底值',
+    mediaTs,
+    `?? '${GENERIC_MIME}'`,
+    '★ 它是"认不出扩展名"的样子，也是"有人把 multipart 里那行字写进库"的样子 —— 浏览器不播它',
+  );
+  contract(
+    '★ media_assets.mime 对 original 刻意是 NULL',
+    readSrc('apps/daemon/src/jobs/runners/transcribe.ts'),
+    '`mime` **刻意不填**',
+    '这条判断被推翻的那天，Content-Type 那一格的期望值来源要跟着改（那正是它守的失败面）',
+  );
 }
 {
   const jobsTs = readSrc('packages/shared/src/jobs.ts');
@@ -1155,6 +1453,12 @@ function contract(name, src, needle, why) {
     'checkPrefixRange(',
     'checkSuffixRange(',
     'classifyJobPoll(',
+    // ↓ 这一轮四条修法的接线，逐条钉住（拆掉任何一条，⑤ 那边也会红，两处互为备份）
+    'checkHasVideoContract(',
+    'checkFetchedByYtdlp(',
+    'checkToolUnderStoreRoot(',
+    'checkUnsatisfiableRange(',
+    'expectedContentType(',
   ]) {
     contract(`审计真的调用了 ${fn})`, auditSrc, fn, '这一条判据被换回内联了');
   }
@@ -1174,70 +1478,126 @@ function contract(name, src, needle, why) {
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 say('');
-say('── ⑤ 抽的过程中发现的**四条空转**，有名有姓的桩（判据没动 —— 本轮是让它可测）');
+say('── ⑤ 那四条空转的桩 —— 已经**翻了个面**：从「缺口仍在」变成「修法仍在」');
 
 /*
- * ⚠️ 这几个桩钉的是**缺口存在**，不是"缺口是对的"。
- *    修好的那天它们会红，逼出一次显式的「删桩 + 更新报告」，
- *    而不是让缺口悄悄消失（下一个人再也看不出这里曾经有过一个洞）
- *    或者悄悄留着（没有任何东西会提起它）。
+ * ## 桩为什么留着（Manager 2026-09-06 裁决逐字：「桩保留,别删」）
+ *
+ * #98 抽判据时抓到四条「把修法抽掉它也不红」，当时一条都没改，各留一个
+ * **会说话的桩**：缺口修好的那天它们会红，逼出一次显式的「删桩 + 更新报告」。
+ * 这一轮四条全修了 —— 于是四个桩**按设计红了**，现在按设计走完最后一步：
+ * 不是删掉，是**掉个头**。
+ *
+ * 从今天起它们钉的是「**修法还在不在**」：
+ *   · 谁把三态改回二态、把 `adapterId` 从判决里拿掉、把 `relative()` 换回
+ *     `startsWith`、把补上的两格删掉 —— 这里当场红。
+ *   · 而它们红的那句话会把人领回**那条空转当初长什么样**，
+ *     不是一句干巴巴的"断言失败"。
+ *
+ * ⚠️ 判据钉的是**结构**（判据源码里那几个字面量在不在），不是"注释里提没提过"。
+ *    这一整轮抓的就是「注释声称一件从没发生的事」，桩自己不能是那个形状。
  */
 {
   const audit = readSrc('scripts/ci/e2e-import-audit.mjs');
   const assertions = readSrc('scripts/ci/e2e-import-assertions.mjs');
-  const stub = (id, stillBroken, what, howToFix) => {
-    if (stillBroken) ok(`⑤-${id} 缺口仍在（登记有效）：${what}`);
+  const stub = (id, fixStillThere, what, ifItGoesRed) => {
+    if (fixStillThere) ok(`⑤-${id} 修法仍在：${what}`);
     else
       bad(
-        `⑤-${id} 缺口**已经被修了**`,
-        `${what}\n      修法应当是：${howToFix}\n` +
-          '      → 请删掉这个桩、更新 `e2e-import-assertions.mjs` 里对应的注释与报告。',
+        `⑤-${id} 修法**被拆掉了**`,
+        `${what}\n      这条缺口当初的样子：${ifItGoesRed}\n` +
+          '      → 要么把修法放回去，要么这是一次有意的判决变更 —— 那就连同这个桩一起改，' +
+          '并更新 `e2e-import-assertions.mjs` 里对应的 `## ✅ 已修` 段。',
       );
   };
 
   stub(
     'a',
-    audit.includes(
-      '   ⚠️ 没收到 media.ready（noteUid=${up.body.noteUid}）—— hasVideo 本例未验证',
-    ) &&
-      !audit.includes(
-        'fail(`F2:${fx.name}`, hv.reason);\n      ok = false;\n    } else if (hv.undecided)',
-      ),
-    '`media.ready` 收不到时**只 say 不 fail**（`hv.undecided` 那一支），总表照旧「✔ 通过」——' +
-      ' 而那一段的注释写着「收不到就如实说收不到，不当成通过」。SSE 事件名改一个字，' +
+    assertions.includes('undecided: true') &&
+      audit.includes('const undecideds = []') &&
+      audit.includes('if (hv.undecided)') &&
+      audit.includes('undecided(`F2:${fx.name}`') &&
+      audit.includes('JSON.stringify({ unknowns: undecideds.length }'),
+    '`media.ready` 收不到 ⇒ **第三态**，进 `undecideds`、进 `--undecided-out` 那份计数，' +
+      '总表那一行也改成 ⊘ —— 不是绿，也不是红（收不到可能是真的未决）。',
+    '那一支曾经**只 say 不 fail**，`ok` 保持 true ⇒ 总表照旧「✔ 通过」，' +
+      '而注释写着「收不到就如实说收不到，不当成通过」。SSE 事件名改一个字，' +
       'hasVideo 这条契约就再也没有读者，且没有任何东西会红。',
-    '把 `hv.undecided` 那一支接进 `fail()`（或接进 `--undecided` 那条管道）',
   );
 
   stub(
     'b',
-    assertions.includes('String(found).startsWith(String(storeRoot))'),
-    '`checkToolUnderStoreRoot` 的第二格今天**不可能红**：`findUnder(storeRoot, …)` 在结构上' +
-      '只会返回 storeRoot 底下的路径。而它真的响起来的那天说的是假话 ——' +
-      '`OPENMEMO_MODELS` 走 env 那一支时没被 `join` 归一化过，Windows 上前缀比对会当场为假' +
-      '（`apps/daemon/src/http/rest/notes.ts` 记着的同一个坑，出现在守卫这一侧）。',
-    '删掉第二格，或改成 `resolve()` 之后再比（`relative()` 不以 `..` 开头）',
+    assertions.includes('export function isUnderRoot(root, candidate, platform') &&
+      assertions.includes('p.relative(p.resolve(String(root)), real)') &&
+      !assertions.includes('String(found).startsWith(String(storeRoot))') &&
+      audit.includes('realpathSync') &&
+      audit.includes('realFound: REAL_FFMPEG'),
+    '两件事都修了：(b) 前缀比对换成 `isUnderRoot()`（`relative()` + `platform` 入参 +' +
+      ' 两边 resolve，照 `apps/daemon/src/http/rest/notes.ts` 的 `isWithinImportRoots` 原修法）；' +
+      '(a) 判据改吃 **realpath 之后**的路径，于是"storeRoot 里放一个指向宿主的软链"这种' +
+      '真实的"借宿主的"形态它真的抓得住。',
+    '老写法 `found.startsWith(storeRoot)`：`findUnder(storeRoot, …)` 结构上只返回' +
+      ' storeRoot 底下的路径 ⇒ 恒真、一次都不可能红；而它真响起来那天说的是假话' +
+      '（Windows 上 env 传进来的未归一化 storeRoot ⇒ 报「借宿主的」而它就在 storeRoot 里）。',
   );
 
   stub(
     'c',
-    !assertions.includes('contentType,\n      expect.ct') && !audit.includes('ctype !== '),
-    '`assertPlayable()` 的文档列了七格，其中**两格只在注释里存在**：' +
-      '② 的「Content-Type 对」（`ctype` 只被 `say()` 打印）与 ⑥ 的「416 + Content-Range」' +
-      '（只比了状态码）。产品两处**都做对了**，是守卫没在看。',
-    '给 `checkFullFetch` 补一格 content-type、给 `checkUnsatisfiableRange` 补一格 Content-Range',
+    assertions.includes('expectContentType === null || contentType === expectContentType') &&
+      assertions.includes('contentRange === `bytes */${expectSize}`') &&
+      audit.includes('expectedContentType(fx.name)') &&
+      audit.includes('expectSize: size'),
+    '文档里那两格补上了：② 的 Content-Type（按扩展名给期望值，镜像 `media.ts` 的' +
+      ' `MIME_BY_EXT`）与 ⑥ 的 `416 + Content-Range: bytes */<size>`。',
+    '`ctype` 曾经**只被 `say()` 打印**、416 只比状态码 —— 而 `assertPlayable()` 的' +
+      '文档从第一天起就写着这两格。产品两处**都做对了**，是守卫没在看。',
   );
 
   stub(
     'd',
-    audit.includes("} else if (fetcher.kind === 'ytdlp') {") &&
-      !audit.includes("fetcher.kind !== 'ytdlp'"),
-    '`adapterId` 被测量、被打印，但**从来不进判决**：§11 里唯一会红的是"一个请求都没收到"。' +
-      'registry 的 fallback 链变了（或这个字段改名 ⇒ 恒为 null），F1 仍然全绿，' +
-      '而 workflow 与审计文件头里那句「验到了 yt-dlp 那一段」从那天起是假话。' +
-      '`fixtureHits > 0` 只证明了**有人**去取过 —— DirectHttp 去取也满足它。',
-    "把 `fetcher.kind !== 'ytdlp'` 接进 `fail()`",
+    assertions.includes('export function checkFetchedByYtdlp') &&
+      assertions.includes("f.kind === 'ytdlp'") &&
+      audit.includes('checkFetchedByYtdlp({ probeAdapter, hits: fixtureHits })') &&
+      audit.includes('if (!fetchedBy.ok) {') &&
+      !assertions.includes('export function checkFixtureWasFetched'),
+    '`adapterId` 进判决了：断的是**哪个适配器**（`kind === \'ytdlp\'`），不是"有没有人来取"。' +
+      '弱的那个入口（`checkFixtureWasFetched`）被第一格原样吸收后删掉 ——' +
+      '留着它等于给调用方留一条退回空转的路。',
+    '此前唯一会红的是"一个请求都没收到"，而 **`fixtureHits > 0` 只证明「有人」取过' +
+      "（DirectHttp 去取也满足它）**；`adapterId` 不是 yt-dlp 时只 `say('ⓘ …')`。" +
+      '于是 fallback 链一变，F1 仍然全绿，而 workflow 那句「验到了 yt-dlp 那一段」成了假话。',
   );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/**
+ * ★ **机器可读的判决**（`--verdict-out <file>`）—— 给 `leg-coverage.mjs` 用。
+ *
+ * ## 为什么这个文件必须存在（2026-09-06 裁决）
+ *
+ * 那个工具此前判「这一格删了会不会崩」靠的是**对整段输出做正则**
+ * （`/SyntaxError|ReferenceError|…/`），判「红的是不是只有记录守卫」靠的是
+ * **匹配一句中文**。`[实测]` 我在一条 `why` 说明里写了一次 `Type` + `Error` 拼起来的词，
+ * 它当场把那一格从「没覆盖」错记成「判不了」——
+ * **守卫自己在读散文**，与这一整轮在猎的是同一个病。
+ *
+ * 所以判决改成结构化的：本文件把 `{ cases, failures, failed[] }` 落盘，
+ * 每条失败带一个 `kind`。`leg-coverage.mjs` 读这份 JSON：
+ *
+ *   · 文件**不存在** ⇒ 这次跑压根没走到这里 ⇒ `broke`（崩了，什么都没证明）
+ *   · `failures === 0` 而退出码非 0（或反过来）⇒ 账对不上 ⇒ 同样算 `broke`
+ *   · 全部失败的 `kind` 都是 `subsumed-record` ⇒ 红的只是记录守卫，**不算覆盖**
+ *
+ * 三条都不看一个字的散文。
+ */
+{
+  const at = process.argv.indexOf('--verdict-out');
+  if (at >= 0 && process.argv[at + 1]) {
+    writeFileSync(
+      process.argv[at + 1],
+      `${JSON.stringify({ cases, failures, failed }, null, 2)}\n`,
+    );
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -1245,7 +1605,7 @@ say('');
 say('─'.repeat(78));
 if (failures === 0) {
   say(`✔ selftest-e2e-import：${cases} 条断言全部通过`);
-  say('  （⑤ 那四条桩是**缺口仍在**的记录，不是通过的功劳 —— 修好的那天它们会红。）');
+  say('  （⑤ 那四条桩现在钉的是「**修法仍在**」—— 谁把修法拆掉，那四条当场红。）');
 } else {
   say(`✘ selftest-e2e-import：${cases} 条里 ${failures} 条失败`);
 }
