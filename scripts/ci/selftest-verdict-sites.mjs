@@ -225,4 +225,70 @@ it('★★ 不变式：全仓每个脚本都满足「新 === 朴素 − function
   assert.ok(sawBiasedFile, '全仓没有任何自带 function 助手的脚本 —— 这条不变式在空转');
 });
 
+console.log('\nE 组：★★ `≥N` 必须真的是下界 —— 偏高的那一侧会悄悄关掉「数出 0 就出声」');
+
+/*
+ * 这一组钉的是**方向**，不是精度。
+ *
+ * `count-verdict-sites` 的输出声称自己是 `≥N`（下界），而它唯一的那条判据是
+ * 「一个守卫被数出 **0** ⇒ 必须有人看」。于是：
+ *
+ *   · 数**偏低** ⇒ `≥` 仍然成立，最坏是多报一次 0，让人白看一眼 —— 无害。
+ *   · 数**偏高** ⇒ `≥` 是**假的**，而且假在防线看不见的那一侧：
+ *     一个真实判据处为 0 的脚本，只要自带一处定义就会被报成 1，
+ *     **那条防线永远不会响。**
+ *
+ * 所以每一种"定义写法"都必须单独钉一条：**只有定义、零调用 ⇒ 必须报 0。**
+ * 少钉一种，就等于给那条防线开一个只进不出的洞。
+ */
+for (const [form, src] of [
+  ['function 声明', 'function must(a, b) {\n  return a;\n}\n'],
+  ['async function 声明', 'async function must(a) {\n  return a;\n}\n'],
+  ['类方法简写', 'class X {\n  must(a, b) {\n    return a;\n  }\n}\n'],
+  ['对象方法简写', 'const h = {\n  must(a) {\n    return a;\n  },\n};\n'],
+  ['async 方法简写', 'class X {\n  async must(a) {\n    return a;\n  }\n}\n'],
+  ['get 访问器', 'class X {\n  get must() {\n    return 1;\n  }\n}\n'],
+  ['箭头式赋值', 'const must = (a, b) => a;\n'],
+]) {
+  it(`★★ 只有「${form}」、零调用 ⇒ 必须报 0（否则 0-防线被关掉）`, () => {
+    assert.equal(
+      countCalls(src, 'must'),
+      0,
+      `「${form}」被当成了调用点 ⇒ ≥N 偏高 ⇒ 真实为 0 的守卫再也不会触发告警`,
+    );
+  });
+}
+
+it('★★ 端到端：一个「只定义不调用」的守卫，扫描器必须报出「0 处判据」', () => {
+  // 这是上面那一族的实际后果：偏高 ⇒ 这条 problem 不会出现 ⇒ 门失效。
+  const src = 'function ok(x) {\n  return x;\n}\nif (bad) process.exit(1);\n';
+  const { problems } = withFixtures({ 'guard-defonly.mjs': src }, (dir) =>
+    scan({ dir, instruments: [] }),
+  );
+  // 它有 exit(1) ⇒ 是守卫；`ok` 只有定义没有调用 ⇒ 判据处应当只剩那一处 exit(1)
+  assert.equal(problems.length, 0, `不该红：${problems.join(' / ')}`);
+  const src0 = 'function ok(x) {\n  return x;\n}\nlet exitCode = 0;\nprocess.exit(exitCode);\n';
+  const r0 = withFixtures({ 'guard-zero.mjs': src0 }, (dir) => scan({ dir, instruments: [] }));
+  assert.equal(r0.problems.length, 1, '真实 0 判据的守卫必须被报出来');
+  assert.match(r0.problems[0], /0 处判据/);
+});
+
+it('★ 具名核对 `lint-workflows.mjs`：新实现与朴素实现必须不同，且差值正好是定义数', () => {
+  /*
+   * ⚠️ 刻意**不把 89 写死**。`lint-workflows.mjs` 是别人在改的文件
+   *    （#101 刚把 L217 的判据抽进 `gha-expr.mjs`），把它的调用点数钉在这里，
+   *    第一次有人加/删一条 `must()` 就会红 —— 那种红没有信息。
+   *    钉的是关系：**新 === 朴素 − 定义数**，且**两者必须不同**（否则这条修复没生效）。
+   *    `[我核过 @ 62fe068]` 当天的值是 新 89 / 朴素 90 / 定义 1。
+   */
+  const dir = dirname(fileURLToPath(import.meta.url));
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[^\n]*?\/\/[^\n]*$/gm, '');
+  const code = strip(readFileSync(join(dir, 'lint-workflows.mjs'), 'utf8'));
+  const naive = NAIVE(code, 'must');
+  const defs = DEFS(code, 'must');
+  assert.ok(defs >= 1, 'lint-workflows.mjs 里应当有 `function must(` 的定义');
+  assert.equal(countCalls(code, 'must'), naive - defs);
+  assert.notEqual(countCalls(code, 'must'), naive, '朴素实现必须给出不同（偏高）的答案');
+});
+
 console.log(`\n\x1b[32m✔ selftest-verdict-sites: ${n} 条全过\x1b[0m`);
