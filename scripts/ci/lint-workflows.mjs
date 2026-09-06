@@ -108,8 +108,12 @@ const MUST_FAIL_LOUDLY = {
    * T-154：上传与校验两个 job 都不许被绕开。
    * 尤其是 `verify` —— 一个"挂了也不影响绿灯"的校验，等于把
    * 「我们发出去的东西对不对」这件事变成装饰。
+   *
+   * `body-check` 同理，而且更容易被人"顺手放行"：它红的时候产物已经传上去了，
+   * 红的只是发布页上印的那几行字，看起来像个排版问题。**它不是** ——
+   * 用户拿页面上的数核对不上时，得到的结论会是"下载损坏 / 被掉包"。
    */
-  'release-upload.yml': ['upload', 'verify'],
+  'release-upload.yml': ['upload', 'verify', 'body-check'],
 };
 
 const problems = [];
@@ -935,6 +939,35 @@ for (const file of files.sort()) {
     `${RU}#verify: 出现了 token —— 这个 job 存在的全部理由就是"不带凭证也能下下来"。` +
       `带着 token 它会继续绿，但再也证明不了任何东西（尤其发现不了 draft release）。` +
       `修法是把 env 拿掉，不是把这条断言删掉`,
+  );
+
+  /* ═════════════════════════════════════════════════════════════════════════════
+   * ③′ 验证链的最后一环必须**在这个 workflow 上**、并且真的调那个比对器
+   *
+   * 背景：`release-verify.mjs` 校的是「匿名下到的字节」对「CI 自己算的 SHA256SUMS」，
+   * **整条链上没有一处会去读发布页正文那三行** —— 而那三行是人手抄的。
+   * v0.7.6 发版时这一步做了，靠的是在 `/tmp` 里临时写的脚本。
+   *
+   * 这三条钉的是**结构**，不是措辞：job 在不在、排在 verify 后面没有、
+   * 那一步跑的到底是不是比对器。删掉其中任何一样，发布页抄错一位就又没人管了。
+   * （比对器自己的反向验证在 `scripts/ci/selftest-compare-body.mjs`，
+   *  已由上面 T-163 那条"selftest 全集 ⊆ test:ci-scripts"的扫描覆盖。）
+   * ═══════════════════════════════════════════════════════════════════════════ */
+  const bodyCheck = ru.jobs?.['body-check'];
+  must(
+    bodyCheck != null,
+    `${RU}: 没有 body-check job —— 发布页正文里那三行 sha256 是全链**唯一**手抄的东西，` +
+      `抄错一位不会有任何东西变红（v0.7.6 之前一直如此）`,
+  );
+  must(
+    [].concat(bodyCheck?.needs ?? []).includes('verify'),
+    `${RU}#body-check: 必须 needs: [verify] —— 它要的 SHA256SUMS 是 upload 产出的，` +
+      `而排在 verify 后面才有"字节已经匿名复核过"这个前提；同时 dry-run 时它得跟着一起跳过`,
+  );
+  must(
+    JSON.stringify(bodyCheck ?? {}).includes('compare-body-vs-ci.mjs'),
+    `${RU}#body-check: 这个 job 里没有一步调用 scripts/ci/compare-body-vs-ci.mjs —— ` +
+      `一个不做比对的比对 job 会稳定报绿，而它失效的样子和"每次都对得上"一模一样`,
   );
 
   /* ④ 上传不许自动触发：往外发东西这件事必须有人按一下。 */
