@@ -786,16 +786,54 @@ try {
   });
   {
     const ev = sawHost(PROBE_HOST);
-    // 关掉之后探针主机解析不出来，probe 必然失败 —— 那正是"没走代理"的样子。
-    record(
-      '⑦ 改回 off 后立即生效',
-      ev.length === 0,
-      `PATCH mode=off → HTTP ${off.status}；随后 probe HTTP ${p3.status}；` +
-        `代理看到 ${ev.length} 条（期望 0 —— 不重启就该立刻不走代理了）`,
-      null,
-      '✅ 立即生效',
-      '❌ **改了不生效（appliedImmediately 是谎话）**',
-    );
+    /*
+     * ★ 这一格的 PASS 是一个**裸的否定**（"代理一条都没看到"），而"根本没发生"
+     *   长得和"发生了但没走代理"一模一样。所以必须先证明**这一发真的跑了**。
+     *
+     *   本脚本对 ② 和 ④ 早就坚持这条区分（"请求在发出**之前**就被拒了 ⇒ 标 UNKNOWN，
+     *   不当成结论"），只有 ⑦ 漏了 —— 这里照它自己的做法补上，不另起一套。
+     *
+     *   `/api/notes/probe` 的错误码（`apps/daemon/src/http/rest/notes.ts:191-256`）：
+     *     · `BAD_REQUEST`(400)      —— 路由层预检就拒了，**一个包都没发**
+     *     · `NO_MEDIA_SOURCE`(422)  —— 每个适配器都真的试过了，都够不着
+     *     · `PROBE_FAILED`(502) / `PROBE_TIMEOUT`(504) —— 试过了，失败/超时
+     *   后三种才算"跑到了"。
+     *
+     *   还有一种环境性的假绿要挡住：探针主机**居然解析得开**（通配符 DNS 的自建
+     *   runner）。那时 probe 可能直连成功，代理照样看到 0 条 ⇒ 这一格会绿得毫无意义，
+     *   而整轮的判据前提（"通了就只可能是走了代理"）已经不成立了。
+     */
+    const code7 = String(p3.body?.error?.code ?? '');
+    const attempted = /^(NO_MEDIA_SOURCE|PROBE_FAILED|PROBE_TIMEOUT)$/.test(code7);
+    const base = `PATCH mode=off → HTTP ${off.status}；随后 probe HTTP ${p3.status} code=${code7 || '(无)'}；代理看到 ${ev.length} 条`;
+    if (p3.status === 200) {
+      record(
+        '⑦ 改回 off 后立即生效',
+        null,
+        `${base} —— ⚠️ 代理关掉之后 probe **居然成功了**：` +
+          `说明 ${PROBE_HOST} 在这台机器上解析得开。整轮判据的前提` +
+          `（"能通就只可能是走了代理"）不成立，这一格的 0 条**不能**读成"已关掉"。`,
+      );
+    } else if (!attempted) {
+      record(
+        '⑦ 改回 off 后立即生效',
+        null,
+        `${base} —— 这一发在**发出之前**就被拒了（code=${code7 || '(无)'}），` +
+          `没跑到。0 条不是"关掉了"的证据，只是"什么都没发生"。` +
+          `（对照：⑤ 同一个请求在代理开着时是 HTTP ${p2.status}。）`,
+      );
+    } else {
+      record(
+        '⑦ 改回 off 后立即生效',
+        ev.length === 0,
+        `${base}（期望 0 —— 不重启就该立刻不走代理了）；` +
+          `这一发确实跑到了：code=${code7} 属"试过但够不着"，正是关掉代理后该有的样子。` +
+          `（对照：⑤ 同一个请求在代理开着时是 HTTP ${p2.status}。）`,
+        null,
+        '✅ 立即生效',
+        '❌ **改了不生效（appliedImmediately 是谎话）**',
+      );
+    }
   }
 
   /* ═════════ 5. 结论 ═════════ */
@@ -833,6 +871,22 @@ try {
     say(`   ⓵ ${untested.length} 条没测成（标 UNKNOWN，不当成通过）：`);
     for (const r of untested) say(`      · ${r.path} —— ${r.evidence}`);
   }
+  /*
+   * ★ 先判**声称那一半**。本脚本量的是「设置页说已生效的东西，是否真的对每一条
+   *   出网路径生效」—— 那是一个**两半**的句子，而 `claimsImmediate` 此前只在
+   *   失败分支里被打印，**从不参与退出码**。也就是说声称那一半从来没被读过：
+   *   接口哪天改回 `appliedImmediately:false`，脚本照样打印
+   *   「与设置页的声称一致」并 exit 0 —— 那时这句话就不准了。
+   *   摆设就是摆设，要么判要么删。这里判。
+   */
+  if (claimsImmediate !== true) {
+    say(
+      `   ✘ 前提变了：PATCH /api/settings/proxy 回的是 appliedImmediately=${patch.body?.appliedImmediately}（不是 true）。`,
+    );
+    say('     本脚本量的是"设置页说已生效的东西是否真的生效"。**声称那一半变了，判据要重读**，');
+    say('     不能默认沿用 —— 所以这里红，红的意思是"来个人确认这个脚本还在量对的东西"。');
+    exitCode = 1;
+  }
   if (bypass.length > 0) {
     say(`   ✘ ${bypass.length} 条**绕过代理**：${bypass.map((r) => r.path).join('、')}`);
     say('');
@@ -842,7 +896,7 @@ try {
   } else if (untested.length > 0) {
     say('   ⓵ 没有发现绕过，但有 UNKNOWN —— 不报绿。');
     exitCode = 1;
-  } else {
+  } else if (exitCode === 0) {
     say('   ✔ 每一条出网路径都走代理，与设置页的声称一致。');
   }
 } catch (e) {

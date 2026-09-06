@@ -18,6 +18,25 @@
  * **不是**"让 Windows 也用 rename"（跨卷 rename 本来就会失败，copy 是必要退路），
  * **而是"界面说的和实际发生的必须一致"**。
  *
+ * ## 🔴 2026-09-06：这条判据此前**只有一格在验，而那一格已经坏了一个月**
+ *
+ * 复核发现两件事，都不是产品的毛病，是**这个脚本自己的**：
+ *
+ * 1. **C4 的 `honest` 恒为 false ⇒ 那一格无条件 FAIL。**
+ *    判据读的是 `Array.isArray(r.sourceResidue)`，而产品在 `f21ca78`(#87) 把
+ *    `SourceResidue` 改成了三态标签联合。`e2e-datadir` 最后一次运行在那之前
+ *    （08-09），且只能手动触发 —— 于是没有任何人知道。详见 `readResidue()`。
+ *
+ * 2. **上面那条判据，八格里只有 C4 在验；而 C4 在 POSIX 上结构上必然 SKIP。**
+ *    也就是说 **linux 与 macOS 两条腿对它的断言次数是 0** —— 它们验的是
+ *    "数据搬对了"，不是"界面说了真话"。C7a/C7b 把 `messageZh` 只打印不判。
+ *
+ * 现在：C4 按三态各自判（`unreadable` **不判红** —— 「我不知道」不是缺陷）；
+ * C7a/C7b 用 `messageMatchesDisk()` **拿磁盘实况现算一句应该说的话**，
+ * 要求上屏那句等于它（不比措辞，改文案不假红）。搬完还要**读回库里的一行**，
+ * 并核对重启请求指向新目录。`secrets.json` 与两条符号链接也进了必查名单
+ * —— 此前它们被造出来，却从来没有被任何一条判据看过。
+ *
  * ## §11：跳过不许渲染成成功
  *
  * 跨卷那格在某些 runner 上确实做不到（没有第二个卷）。做不到就**明确报 SKIP
@@ -95,7 +114,54 @@ const rec = (id, name, status, detail) => {
   if (detail) for (const l of String(detail).split('\n')) console.log(`        ${l}`);
 };
 
-/* ── 造一个五类数据齐全的数据目录（含两级符号链接） ── */
+/*
+ * ── `sourceResidue` 的形状守卫 ────────────────────────────────────────────────
+ *
+ * ★ 这一条是被一次**真的静默断裂**逼出来的，写在这里免得下一个人重蹈：
+ *
+ *   `2676e90`(2026-08-10) 把 C4 的判据从"读措辞"改成"读 `sourceResidue` **数组**"
+ *   —— **当时是对的**。第二天 `f21ca78`(#87) 把产品侧的 `SourceResidue` 改成了三态
+ *   标签联合（`{kind:'read',entries}` / `{kind:'unreadable',reason}`），这里没跟着改。
+ *   于是 `Array.isArray(对象)` **恒为 false** ⇒ `honest` 恒为 false ⇒ **C4 无条件 FAIL**。
+ *
+ *   方向是假红不是假绿，但后果一样坏：它印出来的是一句**诚实的**产品文案，
+ *   却判红 —— 读的人会以为产品坏了，去修一个没坏的东西。
+ *   而 `e2e-datadir` 最后一次运行是 08-09，**在断裂之前**，只能手动触发，
+ *   所以整整一个月没有任何人知道这一格已经不工作了。
+ *
+ * 现在：形状对不上就如实报「**判据读不了这个形状**」。它**照样红**
+ *   （把 `f21ca78` 那次类型变更重放一遍，这里仍然会红 —— 这一点没有放松），
+ *   但红的那句话指着**这个脚本**，而不是指着产品。**至少让失败信息说真话。**
+ *
+ * ⚠️ 类型的事实来源是 `apps/daemon/src/storage/move.ts` 的 `SourceResidue`。
+ *    .mjs 拿不到 TS 类型，所以这里只能做**运行时**形状核对：改那个类型的人
+ *    不会被编译器提醒，只会被这条判据在 CI 上拦住。这是这个脚本能给的最强保证。
+ */
+function readResidue(v) {
+  if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+    if (v.kind === 'read' && Array.isArray(v.entries)) {
+      return { kind: 'read', entries: v.entries.map(String).sort() };
+    }
+    if (v.kind === 'unreadable' && typeof v.reason === 'string') {
+      return { kind: 'unreadable', reason: v.reason };
+    }
+  }
+  let shown;
+  try {
+    shown = JSON.stringify(v);
+  } catch {
+    shown = String(v);
+  }
+  return { kind: 'unknown-shape', shown: shown ?? String(v) };
+}
+
+/*
+ * 这台机器/这个权限下建不建得成符号链接。`null` = 还没试过。
+ * Windows 非管理员建不成 —— 那时链接相关的判据整体不适用，不许假装验过。
+ */
+let LINKS_SUPPORTED = null;
+
+/* ── 造一个数据齐全的数据目录（含两级符号链接） ── */
 async function makeDataDir(root) {
   await mkdir(join(root, 'media'), { recursive: true });
   await mkdir(join(root, 'models', 'by-name', 'backend'), { recursive: true });
@@ -110,19 +176,44 @@ async function makeDataDir(root) {
   try {
     await symlink('libwhisper.so.1.9.1', join(root, 'bin', 'ext', 'libwhisper.so.1'));
     await symlink('libwhisper.so.1', join(root, 'bin', 'ext', 'libwhisper.so'));
+    LINKS_SUPPORTED = true;
   } catch (e) {
+    LINKS_SUPPORTED = false;
     console.log(`        (符号链接未建成: ${e.code} —— 该平台/权限下不支持，链接相关断言将不覆盖)`);
   }
   await writeFile(join(root, 'runtime', 'runtime.json'), '{"installed":[]}');
 }
-const FIVE = [
+
+/*
+ * ── 搬完之后**必须逐个还在**的东西 ────────────────────────────────────────────
+ *
+ * ⚠️ `secrets.json` 是 2026-08-08 那次事故的主角（明文 API Key 被**复制**了一份
+ *    留在旧目录），本文件头三次拿它当这条腿存在的理由 —— 而在此之前它
+ *    **从来没有出现在任何一条判据里**。造它、却不查它。补上。
+ *
+ * ⚠️ 两条符号链接同样补上（T-128：`fs.cp` 不带 `verbatimSymlinks` 会把它们
+ *    解析成指向**旧目录**的绝对路径，删源之后全部悬空，whisper 后端加载不了；
+ *    用户身上真实发生过）。`existsSync` **跟随**链接，所以悬空链接在这里
+ *    必然判红 —— 正是要的那个行为。
+ *    建不成链接的平台（Windows 非管理员）自动不查，见 `LINKS_SUPPORTED`。
+ */
+const MUST_HAVE = [
   ['数据库', 'openmemo.db'],
+  ['密钥', 'secrets.json'],
   ['媒体', 'media/a.mp3'],
   ['模型', 'models/by-name/backend/ggml.bin'],
   ['组件', 'bin/ext/libwhisper.so.1.9.1'],
   ['运行时', 'runtime/runtime.json'],
 ];
-const missingOf = (root) => FIVE.filter(([, r]) => !existsSync(join(root, r))).map(([l]) => l);
+const LINK_ENTRIES = [
+  ['组件链接·一级', 'bin/ext/libwhisper.so.1'],
+  ['组件链接·顶层', 'bin/ext/libwhisper.so'],
+];
+const checkList = () => (LINKS_SUPPORTED ? [...MUST_HAVE, ...LINK_ENTRIES] : MUST_HAVE);
+const missingOf = (root) =>
+  checkList()
+    .filter(([, r]) => !existsSync(join(root, r)))
+    .map(([l]) => l);
 
 /* ── 找第二个卷；找不到返回 null（由调用方报 SKIP） ── */
 async function secondVolumeRoot() {
@@ -198,7 +289,14 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
       ok ? 'PASS' : 'FAIL',
       `strategy=${r.strategy} sourceRemoved=${r.sourceRemoved} sourceIntact=${r.sourceIntact}\n` +
         `源还在=${existsSync(from)} 缺失=${miss.join(',') || '无'}\n` +
-        `界面文案=${ST.moveMessageZh({ files: r.files, links: r.links, sourceRemoved: r.sourceRemoved }, from)}`,
+        /*
+         * ★ 传**整个** `r`（含 `sourceResidue`）—— 产品的路由传的就是整个 result。
+         *   只挑三个字段会让这里印出来的文案和用户真正看到的那句**不一样**：
+         *   少了 `sourceResidue` 就会渲染成「这一版没有报告里面还剩什么」，
+         *   一句产品**永远不会**发给用户的话。C4 已经为同一个坑修过一次
+         *   （`[CI 实测 run 31298064458]`），这一格当时漏了。
+         */
+        `界面文案=${ST.moveMessageZh(r, from)}`,
     );
     await rm(vol, { recursive: true, force: true }).catch(() => {});
   }
@@ -315,11 +413,65 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
          *     换成「拷贝完成，旧目录仍在，里面还剩下：models、openmemo.db」：
          *     旧判据 → 红（假红，这是一句诚实的话）；新判据 → 绿
          *
-         * 新判据：源没删干净时，**剩下的东西必须被逐个念出来**。
+         * 判据：源没删干净时，**剩下的东西必须被逐个念出来**。
          * 文件名是数据不是措辞 —— 句子怎么重写它们都得在，否则用户不知道去哪儿找。
+         *
+         * ★★ 2026-09-06：上面那条判据本身**断了整整一个月**（见文件上方 `readResidue`
+         *    那段）。`sourceResidue` 早已不是数组，`Array.isArray` 恒 false ⇒ 恒 FAIL。
+         *    现在按三态各自判，**不许再把三种情形塌陷成一件事** —— 那正是 #87
+         *    在产品侧治的病，判据这边再犯一次就白治了。
          */
-        const residue = Array.isArray(r.sourceResidue) ? r.sourceResidue.map(String) : [];
-        const honest = residue.length > 0 && residue.every((x) => msg.includes(x));
+        const onDisk = existsSync(from) ? (await readdir(from)).sort() : [];
+        const res = readResidue(r.sourceResidue);
+        let honest;
+        let why;
+        if (res.kind === 'read') {
+          /*
+           * 「我看了」⇒ 名单要**同时**对得上磁盘和文案，三个方向都查：
+           *   · 文案里没念到的  ⇒ 用户不知道旧位置还有东西（就是 08-08 那次事故）
+           *   · 报告里漏掉的    ⇒ 结构化字段自己就少报了
+           *   · 报告里多说的    ⇒ 让用户去找一个**不在那里**的文件。
+           *     `moveMessageZh:303-307` 记着这个实例：那句话曾无条件写「其中包含
+           *     secrets.json」，而实际它已经被删掉了。**保守的假话仍然是假话。**
+           */
+          const unspoken = onDisk.filter((n) => !msg.includes(n));
+          const unnamed = onDisk.filter((n) => !res.entries.includes(n));
+          const overspoken = res.entries.filter((n) => !onDisk.includes(n));
+          honest = unspoken.length === 0 && unnamed.length === 0 && overspoken.length === 0;
+          why =
+            `残留(产品报告)=${res.entries.join('、') || '(空)'}\n` +
+            `残留(磁盘实况)=${onDisk.join('、') || '(空)'}\n` +
+            `文案没念到的=${unspoken.join('、') || '无'}  ` +
+            `报告漏掉的=${unnamed.join('、') || '无'}  ` +
+            `报告多说的=${overspoken.join('、') || '无'}`;
+        } else if (res.kind === 'unreadable') {
+          /*
+           * 「我没能看」⇒ **这不是缺陷，不许判红**。念不出残留在这种情形下
+           * 正是**正确行为**，把它算成 FAIL 就是把「我们不知道」当成「产品坏了」——
+           * 而那恰恰是 `f21ca78`(#87) 当初改这个类型要治的病。别在治它的地方又犯一次。
+           *
+           * 但界面**必须说出它不知道**。判据不去比措辞（一改文案就假红），
+           * 而是用产品自己的格式化函数**现算一句**「我看了，是空的」出来，
+           * 要求真正上屏的那句**不等于**它。纯数据判据，句子怎么重写都成立。
+           */
+          const asIfEmpty = ST.moveMessageZh(
+            { ...r, sourceResidue: { kind: 'read', entries: [] } },
+            from,
+          );
+          honest = msg !== asIfEmpty;
+          why =
+            `旧目录读不到（${res.reason}）—— 「我不知道」本来就该被说出来，这不算缺陷。\n` +
+            `判据：这句话不许和「我看了，是空的」那一句相同。\n` +
+            `与「已经空了」那句相同吗=${msg === asIfEmpty ? '相同(!!这就是 #87 治的那个塌陷)' : '不同(正确)'}`;
+        } else {
+          honest = false;
+          why =
+            `⚠️⚠️ **这条 FAIL 是本审计脚本的判据过时了，不是产品坏了。别去修产品。**\n` +
+            `没见过的 sourceResidue 形状：${res.shown}\n` +
+            `判据认的是 apps/daemon/src/storage/move.ts 里的 SourceResidue 三态：\n` +
+            `  {kind:'read',entries:string[]} | {kind:'unreadable',reason:string}\n` +
+            `谁改了那个类型，请同步改本文件的 readResidue()。`;
+        }
         const ok = r.ok === true && miss.length === 0 && honest;
         rec(
           'C4',
@@ -328,7 +480,8 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
           `ok=${r.ok} sourceRemoved=${r.sourceRemoved} sourceIntact=${r.sourceIntact}\n` +
             `目标缺失=${miss.join(',') || '无(完整)'}\n` +
             `界面文案=${msg}\n` +
-            `【记录】源目录残留=${existsSync(from) ? (await readdir(from)).join(',') : '(已不存在)'}`,
+            `残留三态=${res.kind}\n` +
+            why,
         );
       }
     } finally {
@@ -407,6 +560,18 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
     // `makeDataDir` 放的是占位文本；这一格要的是**真库**，让 openAppDatabase 自己建
     await rm(paths.dbFile, { force: true });
     let db = openAppDatabase({ filename: paths.dbFile });
+    /*
+     * ★ 往真库里写一行，搬完再读回来。
+     *
+     *   在此之前 C7 全程**没写过一行、没读过一行** —— 于是「搬完之后库还能打开、
+     *   用户的笔记还在」这件事一次都没被验过，验的只是"那个文件名还在"。
+     *   而 C7 走的正是**关库 → 搬 → 重开**这条真路径（`f91ac5c` 就是修这一步的），
+     *   库坏在这里正是它最该抓的事。0 字节的 `openmemo.db` 也能让文件名检查全绿。
+     *
+     *   用自己的表，不依赖产品 schema —— schema 改了不该让这条腿假红。
+     */
+    db.db.exec('CREATE TABLE IF NOT EXISTS om_audit_probe(uid TEXT PRIMARY KEY)');
+    db.db.prepare('INSERT OR IGNORE INTO om_audit_probe(uid) VALUES (?)').run('probe-1');
     const events = [];
     const restarts = [];
     const routes = createStorageRoutes({
@@ -441,13 +606,70 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
       body: JSON.stringify({ path: to, moveExisting: true }),
     });
     const json = await resp.json().catch(() => ({}));
+    /*
+     * ★ `requestRestart` 是路由用 `setTimeout(…, 50)` 发的（`storage.ts:706`）——
+     *   响应一到手就去读 `restarts` **必然是空的**。等一下再读，
+     *   否则下面那条「重启必须指向新目录」的判据只会假红。
+     *   （这也是它此前只被收集、从没被判过的原因之一。）
+     */
+    await new Promise((r) => setTimeout(r, 400));
+    /* 搬完之后：库必须能在**新位置**打开，而且刚才写的那一行还在。 */
+    let rows;
+    try {
+      rows = db.db
+        .prepare('SELECT uid FROM om_audit_probe')
+        .all()
+        .map((x) => x.uid);
+    } catch (e) {
+      rows = `读不回来：${e.message}`;
+    }
     await new Promise((r) => server.close(r));
     try {
       db.close();
     } catch {
       /* 已经关掉了就没别的可做 */
     }
-    return { status: resp.status, json, events, restarts };
+    return { status: resp.status, json, events, restarts, rows };
+  }
+
+  /*
+   * ── 这一格自称的判据，此前 linux/macOS 一次都没验过 ──────────────────────────
+   *
+   * 本文件头 `:17-19` 写着判据是「**界面说的和实际发生的必须一致**」。
+   * 而八格里**只有 C4 在验它** —— C4 又在 POSIX 上结构性 SKIP（unlink 语义）。
+   * 也就是说：**linux 与 macOS 两条腿，对这条自称判据的断言次数是 0。**
+   * 它们验的是"数据搬对了"，不是"界面说了真话"。C7 此前把 `messageZh` 只打印不判。
+   *
+   * 判据怎么写才不变成钉措辞：**拿磁盘实况现算一句应该说的话，要求上屏那句等于它。**
+   * 用的是产品自己的 `moveMessageZh`，所以句子怎么重写都不会假红；
+   * 而「源还在却说已移动」这种 08-08 事故形态**必然**被抓住 —— 那正是要守的东西。
+   */
+  async function messageMatchesDisk(json, from) {
+    const gone = !existsSync(from);
+    let onDisk = [];
+    if (!gone) {
+      try {
+        onDisk = (await readdir(from)).sort();
+      } catch (e) {
+        return { ok: null, why: `旧目录还在但读不到（${e.message}）—— 本判据这一轮取不到实况` };
+      }
+    }
+    const truth = {
+      files: json.files,
+      links: json.links,
+      // ★ 这两项取**磁盘实况**，不取产品自己的说法 —— 否则就是拿它的话验它的话。
+      sourceRemoved: gone,
+      sourceResidue: { kind: 'read', entries: onDisk },
+    };
+    const expected = ST.moveMessageZh(truth, from);
+    const actual = String(json.messageZh ?? '');
+    return {
+      ok: actual === expected,
+      why:
+        `旧目录实况=${gone ? '已消失' : `还在，里面有：${onDisk.join('、') || '(空)'}`}\n` +
+        `按实况**应该**说：${expected}\n` +
+        `实际上屏说的是：${actual}`,
+    };
   }
 
   // —— C7a 同卷 ——
@@ -458,15 +680,24 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
     const r = await moveViaProduct(from, to);
     const srcGone = !existsSync(from);
     const miss = missingOf(to);
-    const ok = r.status === 202 && srcGone && miss.length === 0;
+    const say = await messageMatchesDisk(r.json, from);
+    const dbOk = Array.isArray(r.rows) && r.rows.includes('probe-1');
+    const restartedTo = r.restarts.some(
+      (x) => x.dataDir !== undefined && resolvePath(x.dataDir) === resolvePath(to),
+    );
+    const ok =
+      r.status === 202 && srcGone && miss.length === 0 && say.ok === true && dbOk && restartedTo;
     rec(
       'C7a',
-      '★★ 生产路径·同卷：旧目录必须不留',
+      '★★ 生产路径·同卷：旧目录必须不留、库要还能读、界面要说真话',
       ok ? 'PASS' : 'FAIL',
       `HTTP ${r.status}  moved=${r.json.moved}  strategy=${r.json.strategy}\n` +
         `关库/重开顺序=${r.events.join(' → ')}\n` +
         `旧目录还在吗=${existsSync(from) ? '还在(!!)' : '已消失'}  新位置缺失=${miss.join(',') || '无'}\n` +
-        `界面文案=${r.json.messageZh ?? '(无)'}`,
+        `搬完读回库=${Array.isArray(r.rows) ? `[${r.rows.join(',')}]${dbOk ? ' 那一行还在' : ' **写进去的行不见了**'}` : r.rows}\n` +
+        `重启请求=${JSON.stringify(r.restarts)}${restartedTo ? '' : ' **没有一条指向新目录**'}\n` +
+        `界面文案诚实吗=${say.ok === null ? '本轮取不到实况' : say.ok ? '是' : '**否**'}\n` +
+        say.why,
     );
   }
 
@@ -487,16 +718,25 @@ const TMP = await mkdtemp(join(tmpdir(), 'ddaudit-'));
       const r = await moveViaProduct(from, to);
       const srcGone = !existsSync(from);
       const miss = missingOf(to);
-      const ok = r.status === 202 && srcGone && miss.length === 0;
+      const say = await messageMatchesDisk(r.json, from);
+      const dbOk = Array.isArray(r.rows) && r.rows.includes('probe-1');
+      const restartedTo = r.restarts.some(
+        (x) => x.dataDir !== undefined && resolvePath(x.dataDir) === resolvePath(to),
+      );
+      const ok =
+        r.status === 202 && srcGone && miss.length === 0 && say.ok === true && dbOk && restartedTo;
       rec(
         'C7b',
-        '★★ 生产路径·跨卷（真 EXDEV）：旧目录必须不留',
+        '★★ 生产路径·跨卷（真 EXDEV）：旧目录必须不留、库要还能读、界面要说真话',
         ok ? 'PASS' : 'FAIL',
         `HTTP ${r.status}  moved=${r.json.moved}  strategy=${r.json.strategy}\n` +
           `关库/重开顺序=${r.events.join(' → ')}\n` +
           `旧目录还在吗=${existsSync(from) ? '还在(!!) 残留=' + (await readdir(from)).join(',') : '已消失'}\n` +
           `新位置缺失=${miss.join(',') || '无'}\n` +
-          `界面文案=${r.json.messageZh ?? '(无)'}`,
+          `搬完读回库=${Array.isArray(r.rows) ? `[${r.rows.join(',')}]${dbOk ? ' 那一行还在' : ' **写进去的行不见了**'}` : r.rows}\n` +
+          `重启请求=${JSON.stringify(r.restarts)}${restartedTo ? '' : ' **没有一条指向新目录**'}\n` +
+          `界面文案诚实吗=${say.ok === null ? '本轮取不到实况' : say.ok ? '是' : '**否**'}\n` +
+          say.why,
       );
       await rm(vol, { recursive: true, force: true }).catch(() => {});
     }
