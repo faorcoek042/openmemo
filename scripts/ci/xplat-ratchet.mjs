@@ -50,7 +50,7 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isDirectRun } from '../lib/entrypoint.mjs';
 import { REPO_ROOT } from '../lib/version.mjs';
 import { parseTestLog } from './xplat-parse.mjs';
 
@@ -320,6 +320,14 @@ async function summary(lines) {
   await appendFile(f, lines.join('\n') + '\n\n', 'utf8');
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+/*
+ * ⚠️ 入口守卫只许用 `isDirectRun()`（判据见 `scripts/lib/entrypoint.mjs` 文件头）。
+ *
+ * **这一个是这几十个脚本里代价最高的那一个**：它是整条跨平台探针在 mac / win 上的
+ * **唯一判决**。它一空转，`ci-crossplatform` 就是零输出全绿 —— 而那面旗子是六条 e2e 腿
+ * 唯一的告警承重点。原来的 `fileURLToPath(import.meta.url) === argv[1]` 在软链路径下
+ * 静默失配（`import.meta.url` 已 realpath，`argv[1]` 没有），后果不是报错，是 exit 0。
+ */
+if (isDirectRun(import.meta.url, process.argv[1])) {
   await main();
 }

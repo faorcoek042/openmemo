@@ -104,6 +104,7 @@ import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDirectRun } from '../lib/entrypoint.mjs';
 
 import ts from 'typescript';
 
@@ -654,6 +655,10 @@ function main(root) {
   console.log('通过。');
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+/*
+ * ⚠️ 入口守卫只许用 `isDirectRun()`（判据见 scripts/lib/entrypoint.mjs 文件头）。
+ * `resolve()` **不解符号链接**，只做词法归一化 —— 所以这一句原来在软链路径下照样失配。
+ */
+if (isDirectRun(import.meta.url, process.argv[1])) {
   main(process.argv[2] ? resolve(process.argv[2]) : REPO);
 }

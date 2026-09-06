@@ -69,10 +69,10 @@
  * 跑：`node scripts/ci/check-duplicate-declarations.mjs`
  *     `--update` 把当前全部重复写回基线（**只在人核过之后用**）。
  */
-import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
+import { isDirectRun } from '../lib/entrypoint.mjs';
 import { prepare, REPO, sourceFiles, stripCommentsOnly } from '../lib/ts-lexer.mjs';
 
 const BASELINE_PATH = join(REPO, 'scripts', 'duplicate-declarations-baseline.json');
@@ -402,23 +402,12 @@ export function collect(bodies) {
  * ①在 Windows 上把它整个关掉了（`D:\a\…` 拼不出 `file:///D:/a/…`），
  * ②在 macOS 上把自检里那几条从临时目录起的副本整个关掉了 —— 两边症状不同、根同一个。
  * `§7 入口守卫` 那三条腿现在把这两种形态都钉住了，而且**在 Linux 上就会红**。
+ *
+ * ⚠️ 这几行原来内联在这里，理由是「`scripts/*.mjs` 没法 import 那个 TS 模块」。
+ * 第四次（另外 8 个脚本各写了一种变体）之后它被提到
+ * `scripts/lib/entrypoint.mjs` —— 现在全仓的 `.mjs` 共用那一份，
+ * **两份实现（TS 权威 + mjs 孪生），不是每个脚本一份。**
  */
-function isDirectRun(moduleUrl, argv1) {
-  if (!argv1) return false;
-  try {
-    if (moduleUrl === pathToFileURL(argv1).href) return true;
-  } catch {
-    return false;
-  }
-  // argv[1] 可能是一条软链（或 macOS 的 /var、Windows 的 8.3 短名），
-  // 而 import.meta.url 已经是解析后的真路径 —— 所以还要再比一次 realpath。
-  try {
-    return moduleUrl === pathToFileURL(realpathSync(argv1)).href;
-  } catch {
-    return false;
-  }
-}
-
 if (isDirectRun(import.meta.url, process.argv[1])) {
   const baseline = JSON.parse(readFileSync(BASELINE_PATH, 'utf8'));
   const files = sourceFiles();

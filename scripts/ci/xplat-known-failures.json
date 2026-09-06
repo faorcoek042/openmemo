@@ -289,12 +289,6 @@
           "why": "unexamined",
           "since": "0.7.4",
           "note": "同 win32：夹具是 Linux 形状；本轮未逐条查"
-        },
-        {
-          "id": "node scripts/ci/selftest-locale-ratchet.mjs",
-          "why": "real-bug",
-          "since": "0.7.4",
-          "note": "★ 它的空转防线正确地响了：「只从提交树里扫到 0 个 t() 字面量 key —— 扫描坏了」。check-locale-ratchet.mjs 的扫描器在 macOS 上取不到源码集合。该守卫在 ci.yml 里只跑 Linux，所以产品未受影响；但这是一条真的宿主依赖"
         }
       ]
     }
