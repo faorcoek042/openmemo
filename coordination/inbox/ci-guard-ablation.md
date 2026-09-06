@@ -111,29 +111,93 @@
 
 ## 四、立条目、这一轮不做
 
-### ① 🔴 结构上不可测：10 个文件、~460 处内联判据、15,400 行（全层最大结构性欠账）
+### ① 🔴 结构上不可测：判据写在顶层执行的脚本里 ⇒ 没有东西能喂它输入
 
 判据写在顶层执行 + `process.exit()` 的脚本里 ⇒ **import 不进来 ⇒ 没有任何东西能喂它输入**。
 这正是 `e2e-runtime-audit` 那条判据烂了三周的成因，而它**没有被消灭，只是最贵的那个被部分拆开了**。
 
-| 脚本                        | 行数  | 内联断言 | 抽出的判据模块 | 有自检喂输入 |
-| --------------------------- | ----- | -------- | -------------- | ------------ |
-| **`e2e-notes-audit.mjs`**   | 1,879 | **178**  | **无**         | **无**       |
-| `e2e-runtime-audit.mjs`     | 3,018 | 79       | 362 行         | 部分         |
-| `e2e-browser-audit.mjs`     | 2,586 | 100      | 239 行         | 部分         |
-| `e2e-import-audit.mjs`      | 1,580 | 59       | 无             | 无           |
-| `cold-start-audit.mjs`      | 1,217 | 16       | 无             | 无           |
-| `e2e-coldstart.mjs`         | 1,053 | 16       | 无             | 无           |
-| **`lint-workflows.mjs`**    | 1,046 | **2,000 条 `must()`** | 无 | **无**       |
-| `simulate-user-launch.mjs`  | 929   | 43       | 无             | 无           |
-| `proxy-coverage-audit.mjs`  | 873   | 1        | 无             | 无           |
-| `verify-bundle-upgrade.mjs` | 283   | 19       | 无             | 无           |
+⚠️ 标题原写着「**10 个文件、~460 处内联判据、15,400 行**」。那三个数**已经旧了**
+（notes / import 两条已经抽出并接上自检，datadir 那条当时根本不在表里），
+而且中间那个数是用一个**混了口径的计数**加出来的 —— 见下面那段。
+**标题里不再写数**：要现状就跑 `node scripts/ci/count-verdict-sites.mjs`。
 
-- **`e2e-notes-audit.mjs` 最差**：178 处判据、零抽出、零自检。应照
-  runtime / browser / record / allcomponents 已经做过的方式抽出 `e2e-notes-assertions.mjs`。
-- **`lint-workflows.mjs` 第二危险**：它在**推送门禁**上、2,000 条断言，
-  **没有任何一条被证明过会红**。本轮只把其中 T-163 那一条抽了出来并反向验证，
-  剩下 ~1,999 条仍然是"读一遍觉得对"。
+> ## ⚠️ 先读计数口径 —— 这一列被误读过一次，代价是一整轮返工（2026-09-06 补）
+>
+> **口径**：一条「判据处」= **一个会影响退出码的判断点**。
+>
+> ⚠️ 原来那一列叫「内联断言」，而它**不是同一个口径数出来的**：
+>
+> | 写法                                                                                | 谁在用                                                       |
+> | ----------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+> | `assert()`                                                                            | `e2e-runtime-audit`                                            |
+> | `ok()` / `fail()` / `judge()`                                                         | notes / browser / import / coldstart / simulate / bundle       |
+> | **布尔账本**：`rec()`/`record()` 收集 `PASS`/`FAIL`，末尾 `process.exit(fail>0?1:0)`  | `datadir-migrate-audit`、`proxy-coverage-audit`、`e2e-coldstart` |
+> | `must()`                                                                              | `lint-workflows`（运行时条数远大于静态调用点）                 |
+> | 没有助手，直接置 `exitCode = 1`                                                       | `cold-start-audit`                                             |
+>
+> 🔴 **按 `assert` 关键词数，会把布尔账本式的脚本系统性地压到 0~1 条。**
+>
+> 实例：`proxy-coverage-audit.mjs` 曾在本表记作「**1 条断言**」—— 那是 `assert` 关键词数，
+> 而它根本不用 `assert`，真实判据处是 **11 处 `record()`**，覆盖七条出网路径。
+> 「872 行 1 条断言」这个比例读起来像一条空转的守卫，于是有人据此去查它是不是仪表；
+> 查完确认**它是守卫**（#97）。**那一轮返工是被计数口径带偏的，不是脚本的问题。**
+> `datadir-migrate-audit.mjs` 更极端：`assert` 关键词数是 **0**，实际 **12 处 `rec()`** 覆盖八格。
+>
+> ⚠️ **别手抄下面的数字。** 它随每次提交变（本表的行数一列在两周里已经全部旧了一遍）。
+> 要现在的数就跑 —— **口径已经写成可执行的**：
+>
+> ```sh
+> node scripts/ci/count-verdict-sites.mjs
+> ```
+>
+> ⚠️ **数它的时候别用 `grep -E '(^|[^a-z])name\('`。** `[我核过]` 本机的 `grep` 是
+> **ugrep 7.8.4**，这条正则里「组内锚点 + 交替」**静默返回 0**，而 `0` 看起来就像
+> "这个脚本一条判据都没有"。与 `530d8f6` 那条「macOS 上 `\b` 退化成字面 `b`」同族：
+> **一个会因工具而异地返回 0 的计数器，比没有计数器更坏。**
+> 上面那个脚本用 Node 的 RegExp，并且**数出 0 会出声**。
+
+数字快照 `[我核过]` @ `34d8dda` + 本次提交（**只作快照；要现状请跑上面那条命令**）：
+
+| 脚本                        | 行数  | 判据处 | 写法               | 抽出的判据模块                         | 自检喂输入                     |
+| --------------------------- | ----- | ------ | ------------------ | -------------------------------------- | ------------------------------ |
+| `e2e-runtime-audit.mjs`     | 3,018 | 55     | `assert()`         | `e2e-runtime-assertions` 361 行        | `selftest-e2e-runtime`         |
+| `e2e-browser-audit.mjs`     | 2,586 | 45     | `ok()`             | `e2e-browser-assertions` 238 行        | `selftest-e2e-browser`         |
+| `e2e-notes-audit.mjs`       | 2,048 | 55     | `ok()`/`judge()`   | ✅ `e2e-notes-assertions` 1,166 行      | ✅ `selftest-e2e-notes`         |
+| `e2e-import-audit.mjs`      | 1,639 | 28     | `fail()`           | ✅ `e2e-import-assertions` 1,000 行     | ✅ `selftest-e2e-import`（#98） |
+| 🔴 `cold-start-audit.mjs`   | 1,216 | **8**  | 直接置 `exitCode`  | 无                                     | **无**                         |
+| `lint-workflows.mjs`        | 1,069 | 90 静态 / **1,978 运行时** | `must()` | 无                          | 部分（经 `run-selftests-all`） |
+| `e2e-coldstart.mjs`         | 1,052 | **25** | **账本** `judge()` | 无                                     | 无                             |
+| `simulate-user-launch.mjs`  | 928   | 33     | `ok()`/`fail()`    | 无                                     | 无                             |
+| `proxy-coverage-audit.mjs`  | 926   | **11** | **账本** `record()`| 无                                     | 无                             |
+| `datadir-migrate-audit.mjs` | 698   | **12** | **账本** `rec()`   | ✅ `datadir-migrate-assertions` 126 行  | ✅ `selftest-datadir-residue`   |
+| `verify-bundle-upgrade.mjs` | 282   | 13     | `ok()`             | 无                                     | 无                             |
+
+**这一轮订正了什么**：
+
+- 🔴 `proxy-coverage-audit.mjs` **1 → 11**（`assert` 关键词 → 真实判据处）。就是它带偏的。
+- 🔴 `e2e-coldstart.mjs` **16 → 25**。同样是账本式 —— `judge()` 里就写着
+  `ledger.push(...)` + `if (!r.ok && fatal) exitCode = 1`。
+- ➕ **补上 `datadir-migrate-audit.mjs`**，它此前**根本不在这张表里**，
+  而它的 `assert` 关键词数是 0，正是最容易被判死的那一类。
+- ✅ `e2e-notes-audit.mjs` 的「178 / 无 / 无」与 `e2e-import-audit.mjs` 的「无 / 无」
+  都已被兑现（前者本节自己的建议，后者 #98）。那两格是**旧状态，不是现状**。
+- `lint-workflows.mjs` 的「2,000 条」是**运行时**条数，与其余各行的**静态调用点**
+  不是一个量纲，已分开写。
+
+**重查结论**（判据是「有没有能判红的路径、红的条件是什么」，**不数关键词**）：
+
+- **真守卫、判据正常，只是写法不带 `assert`** ⇒ **订正表，不动脚本**：
+  上表 **11 个里的 10 个**，每一个都有明确的判红路径。
+- **真守卫、判据确实薄** ⇒ **只登记，本轮不补**：🔴 **`cold-start-audit.mjs`** ——
+  1,216 行、13 个 `hdr()` 分节，全文只有 **8 处**能置 `exitCode = 1`，且没有任何账本。
+  它自己的注释（`:1138`）记着同一件事：「在此之前，第 8 节整节都是"只打印"」。
+  `[读码]` **我没有逐节核对哪几节只打印不判** —— 那是下一个人的活，别把这句当结论抄走。
+- **是仪表不是门禁** ⇒ **本表里一个都没有。** 仪表登记册在 `check-workflow-expiry.mjs`
+  的 `INSTRUMENTS`，与这张表是两批东西，别混。
+
+- **`lint-workflows.mjs` 仍然第二危险**：它在**推送门禁**上、运行时 1,978 条断言，
+  **绝大多数没有任何一条被证明过会红**。T-163 那一条已抽出并反向验证，
+  剩下的仍然是"读一遍觉得对"。
 
 ### ② 🟡 `startDaemon` ×9 / `stopDaemon` ×8 / `waitForJob` ×6 / `which` ×6
 
