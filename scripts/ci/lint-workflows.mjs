@@ -43,6 +43,13 @@ import { parse } from 'yaml';
  * 它 import 的 `platform-scope.mjs` 也是纯模块（只有 `narrowTo()` 被调用时才退出）。
  */
 import { auditSelftestCoverage, listSelftestFiles } from './run-selftests-all.mjs';
+/*
+ * ⚠️ `gha-expr.mjs` 是纯模块（导出求值器与判定函数，import 不跑任何东西）。
+ * `judgeReporterExemption()` 抽在那边**不是为了分文件好看** —— 是因为它在本文件里
+ * 根本没法被喂输入（顶层执行 + 结尾 `process.exit()`，import 不进来），
+ * 而它上一版恰恰栽在一个「只有喂输入才看得见」的边界上（见该函数的文件头）。
+ */
+import { judgeReporterExemption } from './gha-expr.mjs';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const WF_DIR = join(REPO_ROOT, '.github', 'workflows');
@@ -121,6 +128,24 @@ const checksNote = [];
  * 哪天主语没了，要么是有人把修法退回去了，要么这条规则该删 —— 两种都得有人看见。
  */
 let statusFnJobsSeen = 0;
+/**
+ * ★ `checks` 里有多少次来自**三条键名扫描规则**（顶层 / job / step 的合法键名）。
+ *
+ * 立它的理由是一次实测：`[实测 2026-09-06]` 结尾那句「N 条断言全部通过」的 N
+ * **是 `must()` 的调用次数，不是判据条数** —— 静态调用点只有 89 个，而其中
+ * 三条键名扫描就吃掉了六成以上。这个数被抄进过十几份报告，
+ * 每次都被读成「1978 条独立的判据」。
+ *
+ * ⚠️ 这里**不写死那个比例**（写死就是下一个会陈的数）——
+ *    由这三条规则**现算**，结尾那行照实印出来。
+ *
+ * ⚠️⚠️ **不许把它包成 `mustKeyName()` 之类的助手。** 试过一次，代价是具体的：
+ *    两个数判据处的工具都是按**调用方栈帧 / `must(` 文本**认规则的，
+ *    包一层之后三条键名规则会**塌成一条** ——
+ *    `lintwf-coverage.mjs` 从 89 掉到 87、`count-verdict-sites.mjs` 从 90 掉到 88，
+ *    而两边都**照常报绿**。所以这里老老实实在调用点旁边 `+= 1`。
+ */
+let keyNameChecks = 0;
 
 function must(cond, msg) {
   checks += 1;
@@ -141,6 +166,7 @@ for (const file of files.sort()) {
   }
 
   for (const k of Object.keys(doc ?? {})) {
+    keyNameChecks += 1;
     must(WORKFLOW_KEYS.has(k), `${file}: 顶层键 \`${k}\` 不是 GitHub 认识的键`);
   }
 
@@ -152,6 +178,7 @@ for (const file of files.sort()) {
     const where = `${file}#${jobName}`;
 
     for (const k of Object.keys(job ?? {})) {
+      keyNameChecks += 1;
       must(JOB_KEYS.has(k), `${where}: job 键 \`${k}\` 不是 GitHub 认识的键（会被整份拒绝）`);
     }
 
@@ -212,13 +239,28 @@ for (const file of files.sort()) {
         // 而它必须在 gate 红时照跑 —— 一个"谁没跑到"的汇报器如果自己被跳过就白做了。
         'ci.yml#gate-summary': '纯汇报：只读已有 outcome 计数，不做判定；判定方 gate 红则 run 红',
       };
-      const exemptReason = REPORTER_ONLY[`${file}#${jobName}`];
-      if (exemptReason) {
+      /*
+       * ★ 2026-09-06：这里原来是 `if (exemptReason)` —— 而空串是 falsy，
+       *   于是「豁免必须带理由（**这条是空的**）」那条 `must` 唯一进不去的分支，
+       *   恰恰就是它声称要抓的那个形状。判据现在判**键在不在**（`Object.hasOwn`），
+       *   空串 / null / 非字符串都进得来、都会被判红。完整成因与实测三格见
+       *   `gha-expr.mjs::judgeReporterExemption` 的文件头。
+       */
+      const ex = judgeReporterExemption(REPORTER_ONLY, `${file}#${jobName}`);
+      if (ex.registered) {
         must(
-          typeof exemptReason === 'string' && exemptReason.length > 10,
-          `${where}: 豁免必须带理由（这条是空的）`,
+          ex.reasonOk,
+          `${where}: REPORTER_ONLY 里登记了这个 job，但**理由不合格**（实得 ` +
+            `${JSON.stringify(ex.reason)}）—— 豁免必须写清"它绿不绿都不构成一句关于产品的断言"` +
+            `为什么成立。空串 / 十个字以内 / 非字符串都不算。`,
         );
-      } else {
+      }
+      /*
+       * ★ 豁免只在**理由合格**时才真的生效：写坏了的豁免**买不到豁免**，
+       *   下面那圈逐条检查照跑。也就是说这条断言红的时候，行为仍然停在保守的那一侧。
+       *   （老写法也是保守的，但那是 falsy 顺带的**巧合**；这一行把它变成明写的判据。）
+       */
+      if (!ex.exempt) {
         for (const need of needList) {
           const esc = String(need).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           must(
@@ -238,6 +280,7 @@ for (const file of files.sort()) {
     for (const [i, step] of steps.entries()) {
       const sw = `${where}[${i}]${step?.name ? ` "${step.name}"` : ''}`;
       for (const k of Object.keys(step ?? {})) {
+        keyNameChecks += 1;
         must(STEP_KEYS.has(k), `${sw}: step 键 \`${k}\` 不是 GitHub 认识的键`);
       }
       must(
@@ -1061,9 +1104,58 @@ must(
 
 for (const n of checksNote) console.log(`   ⓘ ${n}`);
 
+/* ═══════════════════════════════════════════════════════════════════════════════════
+ * ★ 2026-09-06：这段汇总以前只有一句 `N 条断言全部通过（M 个 workflow）`，而那句
+ *   **说的不是真话** —— 准确地说，它让人读出两件本文件并没有做到的事：
+ *
+ *   ① **N 不是判据条数**，是 `must()` 的调用次数：静态调用点少得多，而三条键名
+ *      扫描规则就占掉六成以上。这个数被抄进过十几份报告，每次都被读成
+ *      「1978 条独立的判据」。⇒ 下面把**规则条数**与**键名扫描占掉多少次**
+ *      都**现算**出来，一个写死的都不留。
+ *   ② 它读起来像是**那几个被扫到的脚本也被盯死了**。实际不是：本文件对
+ *      `build-whisper.sh` / `build-probe.sh` / `release-upload.mjs` / `release-verify.mjs`
+ *      只查少数几条**结构**性质。`[实测 2026-09-06]` 对这四个脚本做 2060 个逐行删变异，
+ *      本文件抓到 12 个，而它们各自的自检抓到 815 个 —— 也就是说
+ *      **判据本体在那两个自检里，不在这里**。那不是洞，是分工；但汇总行必须说清楚，
+ *      否则下一个人会以为这四个脚本已经被门禁盯住了。
+ *
+ * ⚠️ 这几行**不许再写死任何统计数字**。要么现算，要么只说定性的那一句。
+ *    （②里那两个数字是**一次消融实测的历史记录**，写在注释里、不进输出 ——
+ *      输出里只留"判据本体在哪"这句不会过期的话。）
+ * ═══════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * **现算**本文件里的规则条数 = `must(` 的静态调用点数（不含 `function must(` 那处定义）。
+ *
+ * ⚠️ 口径与 `scripts/ci/count-verdict-sites.mjs` 刻意一致，只多减掉那处定义 ——
+ *    那个脚本把定义也数进去了（`[实测]` 它报 90，真正的调用点是 89）。
+ *    两边对不上时，先看是不是有人给 `must()` 包了一层助手：包一层会让
+ *    好几条规则**塌成一条**，而两个计数器都会照常报绿。
+ */
+/*
+ * ⚠️ 用已经 import 的 `readFile`，**不要**为它新加一个 `node:fs` 的 import：
+ *    `lintwf-coverage.mjs` 的插桩锚在第 34 行那句 `from 'node:fs/promises'` 上，
+ *    动它会让插桩落空（那时插桩会抛错，不会静默出错位结果 —— 但没必要去撞它）。
+ */
+const selfSrc = (await readFile(fileURLToPath(import.meta.url), 'utf8'))
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^[^\n]*?\/\/[^\n]*$/gm, '');
+const staticRules =
+  (selfSrc.match(/(^|[^A-Za-z0-9_.$])must\s*\(/gm) ?? []).length -
+  (selfSrc.match(/function\s+must\s*\(/g) ?? []).length;
+
+const SCOPE_NOTES = [
+  `这 ${checks} 次是 \`must\` 的**调用次数**，不是判据条数：静态规则 **${staticRules} 条**，` +
+    `其中 3 条键名扫描规则就占掉 ${keyNameChecks} 次（规则 × 每个 workflow × 每个 job/step × 每个键）。` +
+    `本检查只钉**结构**、不钉措辞；逐条规则的覆盖分档见 \`scripts/ci/lintwf-coverage.mjs\`（手动跑）。`,
+  `对 build-whisper.sh / build-probe.sh / release-upload.mjs / release-verify.mjs ` +
+    `只查少数几条结构性质，**判据本体在 selftest-build-whisper.sh 与 selftest-release-upload.mjs 里**，不在这里。`,
+];
+
 if (problems.length > 0) {
-  console.log(`✘ lint-workflows: ${problems.length} 个问题（共 ${checks} 条断言）`);
+  console.log(`✘ lint-workflows: ${problems.length} 个问题（共 ${checks} 次断言）`);
   for (const p of problems) console.log(`  - ${p}`);
   process.exit(1);
 }
-console.log(`✔ lint-workflows: ${checks} 条断言全部通过（${files.length} 个 workflow）`);
+console.log(`✔ lint-workflows: ${checks} 次断言全部通过（${files.length} 个 workflow）`);
+for (const n of SCOPE_NOTES) console.log(`   ⓘ ${n}`);

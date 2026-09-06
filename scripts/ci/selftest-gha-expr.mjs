@@ -29,6 +29,8 @@ import {
   ghaString,
   ghaTruthy,
   interpolate,
+  judgeReporterExemption,
+  judgeReporterExemptionLegacy,
   simulateJobs,
   usesStatusFunction,
 } from './gha-expr.mjs';
@@ -428,6 +430,80 @@ throws(() => interpolate('${{ 1 == 1 ', {}), '没闭合的 `${{`', /没闭合/);
 throws(() => evaluateExpression("format('{1}', 'a')", {}), 'format 占位符越界', /只传了/);
 throws(() => evaluateExpression('inputs.a == ', {}), '表达式在该有值的地方结束', /结束/);
 
+/* ═══ I 组：★ REPORTER_ONLY 豁免 —— 老实现对同一个夹具**不红** ══════════════════ */
+console.log('\n\x1b[1mI 组：★ 豁免理由的空串夹具（老实现不红 = 这次修法真的换来了鉴别力）\x1b[0m');
+
+/*
+ * `lint-workflows.mjs` 的 #102 白名单曾经写成 `if (exemptReason) { must(…长度>10…) }`。
+ * 空串是 falsy ⇒ 整个 `if` 被绕过 ⇒ **那条 `must` 根本不执行**，而它的报错信息
+ * 写的正是「豁免必须带理由（**这条是空的**）」。
+ *
+ * `[实测 2026-09-06]` 拿真 workflow 跑三格：理由 = `''` / `'   '` / `null` 时
+ * 整份 lint **exit 0，一格都不红**；只有 1~10 字的非空串才红。
+ *
+ * 下面每一格都**两个实现各跑一遍**：新实现必须判「不豁免」，
+ * 而前三格老实现必须判「豁免」—— 那正是它当年放过去的那批。
+ */
+const K = 'x.yml#reporter';
+/*
+ * ⚠️ 判的是 `reportsProblem`（「这份登记写坏了，该报一条问题」），**不是** `exempt`。
+ *   两者在老实现里被同一个 falsy 闸住，正是那个坑；分开写才看得出差别在哪一格。
+ *   `'            '`（12 个空格）是刻意挑的：它**长于 10**，所以老实现只数 `length`
+ *   就放行了，而它一个字的理由都没写。
+ */
+const EXEMPTION_CASES = [
+  // [理由, 新实现该不该报问题, 老实现该不该报问题, 说明]
+  ['纯汇报：只读已有 outcome，不做任何判定', false, false, '合格的理由：两版都不报'],
+  ['', true, false, '★ 空串 —— 老实现**根本没执行那条 must**，净效果是「当成没登记」'],
+  ['            ', true, false, '★ 12 个空格 —— 老实现只数 length，一个字没写也放行'],
+  [null, true, false, '★ null —— 同样被 falsy 绕过'],
+  [undefined, true, false, '★ 显式写成 undefined —— 键在，值不在'],
+  // 老实现漏的**只是 falsy 那一族**：真值非字符串它的 typeof 那一半够得着。
+  [42, true, true, '非字符串但是真值 —— 这一格老实现也抓得到'],
+  ['x', true, true, '短串：这是老实现唯一抓得到的形状'],
+];
+for (const [reason, wantNew, wantLegacy, note] of EXEMPTION_CASES) {
+  const reg = { [K]: reason };
+  is(
+    judgeReporterExemption(reg, K).reportsProblem,
+    wantNew,
+    `新实现报问题 · ${show(reason)} → ${note}`,
+  );
+  is(
+    judgeReporterExemptionLegacy(reg, K).reportsProblem,
+    wantLegacy,
+    `老实现报问题 · ${show(reason)}`,
+  );
+}
+
+/*
+ * ★ 整组的重点，单独写出来：**空串上两个实现必须给出不同答案**。
+ * 它红了只有两种可能 —— 修法被退回去了，或者老实现的复刻抄错了。两种都得有人当场看见。
+ */
+is(
+  judgeReporterExemption({ [K]: '' }, K).reportsProblem &&
+    !judgeReporterExemptionLegacy({ [K]: '' }, K).reportsProblem,
+  true,
+  '★★ 空理由：新实现报问题，老实现**一声不吭** —— 这次修法换来的鉴别力就是这一格',
+);
+
+/* 没登记的 job 不受影响：既不豁免，也不该报「理由不合格」。 */
+is(judgeReporterExemption({}, K).registered, false, '没登记 ⇒ registered=false（不报理由问题）');
+is(judgeReporterExemption({}, K).exempt, false, '没登记 ⇒ 不豁免（走正常逐条检查）');
+
+/*
+ * ★ 保守侧：理由不合格时 `exempt` 必须是 false —— 一个写坏了的豁免**买不到豁免**。
+ *   老实现这一格**碰巧**也是保守的（falsy ⇒ 走 else），但那是巧合不是判据；
+ *   这里把它钉成断言，免得下一次"顺手简化"把巧合弄丢。
+ */
+for (const badReason of ['', '   ', null, undefined, 42, {}]) {
+  is(
+    judgeReporterExemption({ [K]: badReason }, K).exempt,
+    false,
+    `保守侧 · 理由 ${show(badReason)} ⇒ 不豁免，逐条检查照跑`,
+  );
+}
+
 /* ═══ 结算 ═══════════════════════════════════════════════════════════════════════ */
 
 /*
@@ -435,7 +511,7 @@ throws(() => evaluateExpression('inputs.a == ', {}), '表达式在该有值的�
  * 剩下的部分照样会「全部通过」，那种绿正是本仓在清的东西。加了新断言就把这个数一起改，
  * 那是一次显式决定，不是一次没人看见的缩水。
  */
-const FLOOR = 94;
+const FLOOR = 117;
 
 console.log('');
 if (checked === 0) {
