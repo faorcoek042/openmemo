@@ -809,6 +809,76 @@ export function usesStatusFunction(src) {
 }
 
 /**
+ * `lint-workflows.mjs` 的 **REPORTER_ONLY 豁免**判定 —— 抽到这里是为了**能被喂输入**。
+ *
+ * ## 它判什么
+ *
+ * #102 那条断言（「解除了默认 `success()` 就必须逐条写回 `needs.*.result`」）留了一个
+ * 白名单：纯汇报作业可以豁免，但**必须写清理由**。这个函数回答三件事：
+ * 这个 job **登记了没有**、理由**合不合格**、以及最终**豁不豁免**。
+ *
+ * ## ⚠️ 为什么判「键在不在」而不是判「值真不真」
+ *
+ * 老写法是 `if (exemptReason) { must(reason.length > 10, '豁免必须带理由（这条是空的）') }`。
+ * 空串是 falsy ⇒ 直接绕过整个 `if` ⇒ **那条 `must` 根本不执行**。
+ * 也就是说它报错信息里写的「这条是空的」那个形状，**恰恰是它唯一进不去的分支**。
+ *
+ * `[实测 2026-09-06]` 把某条豁免的理由改成 `''`：整份 lint **exit 0**，一格都不红；
+ * 只有 1~10 字的**非空**串才让它红。老写法的净效果是「空理由 = 压根没登记」——
+ * 结果**碰巧**落在保守的那一侧（那个 job 会回到逐条检查）。**碰巧不是判据。**
+ * 所以这里把它写明：
+ *
+ *   · `registered` 用 `Object.hasOwn` ⇒ 空串、`null`、非字符串**都进得来**，都会被判红；
+ *   · `exempt` 只有在**理由合格**时才为真 ⇒ 一个写坏了的豁免**买不到豁免**，
+ *     调用方照常跑逐条检查。**红了也停在保守的那一侧**，而这一次是明写的，不是巧合。
+ *
+ * ⚠️ 这条规则的**主语是 `lint-workflows.mjs` 里的字面量常量**，不是任何 workflow 的内容。
+ *    所以对被守制品做任何变异都不会让它红（`[实测]` 7082 个变异，零命中）——
+ *    它的坏输入只能是夹具，就在 `selftest-gha-expr.mjs` I 组。登记见
+ *    `lintwf-coverage.mjs` 的 `SELF_SUBJECT_RULES`。
+ */
+export function judgeReporterExemption(registry, key) {
+  const reg = registry ?? {};
+  const registered = Object.hasOwn(reg, key);
+  const reason = registered ? reg[key] : undefined;
+  const reasonOk = typeof reason === 'string' && reason.trim().length > 10;
+  return {
+    registered,
+    reason,
+    reasonOk,
+    /** 豁免真的生效了吗（生效 ⇒ 调用方跳过逐条 `needs.*.result` 检查）。 */
+    exempt: registered && reasonOk,
+    /** 调用方该不该为「豁免登记本身写坏了」报一条问题。 */
+    reportsProblem: registered && !reasonOk,
+  };
+}
+
+/**
+ * ★ **老实现**，逐字照抄 2026-09-06 修法之前的那一版，只留给自检做反向对照。
+ *
+ * 它的存在理由与 `selftest-workflow-expiry.mjs` 的 C 组同一条：一份「改完跑一遍绿了」
+ * 的自检证明不了任何事 —— 必须证明**老实现对同一个夹具不红**，新实现才算换来了鉴别力。
+ * 返回值刻意与 `judgeReporterExemption` 同形，方便逐格比对。
+ */
+export function judgeReporterExemptionLegacy(registry, key) {
+  const reason = (registry ?? {})[key];
+  /*
+   * 老写法逐字：`if (exemptReason) { must(typeof … === 'string' && … .length > 10, …) } else { …逐条检查… }`
+   * ⇒ `exempt`（走豁免分支）与「报不报问题」都由**同一个 falsy 判断**闸住，
+   *   而那正是空串滑过去的原因：falsy ⇒ 连那条 must 都不执行。
+   */
+  const checked = Boolean(reason);
+  const reasonOk = typeof reason === 'string' && reason.length > 10;
+  return {
+    registered: checked,
+    reason,
+    reasonOk: !checked || reasonOk,
+    exempt: checked,
+    reportsProblem: checked && !reasonOk,
+  };
+}
+
+/**
  * 完整的 `if:` 语义。返回**严格布尔**。
  *
  * ★ 隐式 `success()` —— 本文件存在的头号理由。文档原话
