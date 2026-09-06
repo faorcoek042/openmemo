@@ -62,7 +62,7 @@
  * `scripts/ci/selftest-summarize-gate.mjs` 直接 import 单测。
  */
 import { appendFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { isDirectRun } from '../lib/entrypoint.mjs';
 
 /** GitHub 的 `steps.<id>.outcome` / `needs.<job>.result` 只会是这四种之一。 */
 export function classify(outcome) {
@@ -172,6 +172,10 @@ function main() {
   process.exit(allPass ? 0 : 1);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+/*
+ * ⚠️ 入口守卫只许用 `isDirectRun()`（判据见 `scripts/lib/entrypoint.mjs` 文件头）。
+ * 这一个是 `ci.yml` 的**收尾汇总**：它空转 = 那份汇总整个不存在，而 exit 0 让门禁照样绿。
+ */
+if (isDirectRun(import.meta.url, process.argv[1])) {
   main();
 }

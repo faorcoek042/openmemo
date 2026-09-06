@@ -54,6 +54,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDirectRun } from '../lib/entrypoint.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
@@ -187,6 +188,17 @@ function runWith(mutatedSource) {
         /* 有些树上没有这一层 */
       }
     }
+    /*
+     * ⚠️ `scripts/lib/` 也要接过来：`scripts/ci/*.mjs` 里有 `from '../lib/x.mjs'`
+     * （入口守卫收敛到 `scripts/lib/entrypoint.mjs` 之后本文件自己就是其中一个）。
+     * 缺了它，沙箱里的副本会 ERR_MODULE_NOT_FOUND —— 而"崩在 import 上"和
+     * "变异被抓到了"在这个工具里长得一样，那正是下面那道基线闸要防的假绿。
+     */
+    try {
+      symlinkSync(join(REPO, 'scripts', 'lib'), join(dir, 'scripts', 'lib'));
+    } catch {
+      /* 同上 */
+    }
     try {
       symlinkSync(join(REPO, 'package.json'), join(dir, 'package.json'));
     } catch {
@@ -317,4 +329,5 @@ function main() {
 }
 
 // 被 selftest import 时不自动跑。
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();
+// ⚠️ 只许用 `isDirectRun()`（判据见 scripts/lib/entrypoint.mjs 文件头）。
+if (isDirectRun(import.meta.url, process.argv[1])) main();

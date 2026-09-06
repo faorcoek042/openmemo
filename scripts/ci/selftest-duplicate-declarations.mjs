@@ -52,10 +52,15 @@ const SCRIPT = resolve(REPO, 'scripts/ci/check-duplicate-declarations.mjs');
 /**
  * 做一份**改过一处**的被测脚本副本，放进临时目录里 spawn。
  *
- * ⚠️ 副本必须把 `'../lib/ts-lexer.mjs'` 换成绝对路径 —— 否则它在 `/tmp/xxx/` 下
+ * ⚠️ 副本必须把 `'../lib/*.mjs'` 那几个相对 import 换成绝对路径 —— 否则它在 `/tmp/xxx/` 下
  * 解析成一个不存在的模块，进程当场崩，而崩出来的 stdout 恰好也**不含**我们要断言的那段字符串。
  * 也就是说：**"没打印"和"根本没跑起来"长得一模一样**，而前者正是变异腿想证明的东西。
  * `[实测]` 第一版就栽在这里，两条腿一起假绿。所以每次 spawn 都顺带断言"它真的跑起来了"。
+ *
+ * ⚠️ 这里**按模式**改写，不是钉死 `ts-lexer.mjs` 一个名字：被测脚本现在还 import
+ * `../lib/entrypoint.mjs`（入口守卫从内联收敛到共用那一份）。钉死一个名字的写法，
+ * 在第二个 lib import 出现的当天就会让所有副本崩在 import 上 —— 而那正是上面那句
+ * 「没打印和没跑起来长得一样」说的情形。下面的下界断言就是防这个。
  *
  * ⚠️⚠️ 而"换成绝对路径"必须走 `pathToFileURL().href`，**不许把裸路径塞进 import**。
  * 这是 T-145（`scripts/selfcheck.mjs`）那个坑的**同一族**：Windows 上 `D:\a\…` 会被
@@ -63,10 +68,19 @@ const SCRIPT = resolve(REPO, 'scripts/ci/check-duplicate-declarations.mjs');
  * 于是本文件里所有起副本的腿在 win32 上**一条都跑不起来**（首次三平台实跑 run 33998491941 抓到）。
  */
 function mutatedCopy(dir, ...edits) {
-  let src = readFileSync(SCRIPT, 'utf8').replace(
-    "from '../lib/ts-lexer.mjs'",
-    `from ${JSON.stringify(pathToFileURL(resolve(REPO, 'scripts/lib/ts-lexer.mjs')).href)}`,
+  let src = readFileSync(SCRIPT, 'utf8');
+  const libImports = [...src.matchAll(/'\.\.\/lib\/([A-Za-z0-9_.-]+\.mjs)'/g)];
+  assert(
+    libImports.length >= 2,
+    `被测脚本里只找到 ${libImports.length} 个 '../lib/*.mjs' import（期望 ≥2：ts-lexer + entrypoint）` +
+      ` —— 改写规则和被测脚本漂了，副本多半会崩在 import 上而看起来像"没打印"`,
   );
+  for (const [whole, name] of libImports) {
+    src = src.replace(
+      whole,
+      JSON.stringify(pathToFileURL(resolve(REPO, 'scripts', 'lib', name)).href),
+    );
+  }
   for (const [from, to] of edits) {
     assert(
       src.includes(from),

@@ -53,7 +53,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { pathToFileURL } from 'node:url';
+import { isDirectRun } from './lib/entrypoint.mjs';
 
 /** 最多列几个文件 —— 树很脏时不要刷屏。 */
 const MAX_LIST = 12;
@@ -143,8 +143,11 @@ export function dirtyTreeNotice({ after = false, force = false } = {}) {
   }
 }
 
-/* ── CLI 入口：只有被直接执行时才跑，被 import 时不动 ── */
-if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+/* ── CLI 入口：只有被直接执行时才跑，被 import 时不动 ──
+ * ⚠️ 只许用 `isDirectRun()`（判据见 scripts/lib/entrypoint.mjs 文件头）：
+ * `pathToFileURL(argv[1]).href === import.meta.url` 只修了百分号编码那一半，
+ * 软链那一半仍然会静默失配 —— 而失配的表现是这个脚本整个不出声。 */
+if (isDirectRun(import.meta.url, process.argv[1])) {
   const argv = process.argv.slice(2);
   dirtyTreeNotice({ after: argv.includes('--after'), force: argv.includes('--force') });
   // ★ 永远 0：树脏是常态不是故障（做成红门禁 = 一条迟早被删掉的守卫）。

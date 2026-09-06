@@ -68,7 +68,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isDirectRun } from '../lib/entrypoint.mjs';
 import { parse } from 'yaml';
 import { REPO_ROOT, readProductVersion, VERSION_RE } from '../lib/version.mjs';
 
@@ -476,6 +476,7 @@ async function main() {
 }
 
 // 被 selftest import 时不自动跑。
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// ⚠️ 只许用 `isDirectRun()`（判据见 scripts/lib/entrypoint.mjs 文件头）。
+if (isDirectRun(import.meta.url, process.argv[1])) {
   await main();
 }

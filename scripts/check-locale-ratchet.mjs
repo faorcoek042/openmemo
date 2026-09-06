@@ -249,13 +249,58 @@ const PLURAL = ['', '_zero', '_one', '_two', '_few', '_many', '_other'];
  * （和 `check-test-ratchet.mjs` 从 `ls-files` 改成 `ls-tree HEAD` 是同一条。）
  *
  * 用一次 `git grep` 直接搜**提交树**，不逐个 `git show`（几百次子进程太慢）。
+ *
+ * ⚠️ 这里**不许**用 `\b`（词边界）。它是 GNU 正则扩展，**POSIX ERE 里没有**，
+ * 而 `git grep -E` 用的是**它链接的那个 C 库的**正则实现：
+ *
+ *   | 平台 | git 2.55.0 链的正则 | `\b` |
+ *   |---|---|---|
+ *   | linux | glibc | ✔ 词边界 |
+ *   | win32 | Git for Windows 以 `NO_REGEX` 构建、用 git 自带 `compat/regex`（GNU 血统）| ✔ 词边界 |
+ *   | **darwin** | Homebrew git 链**系统 BSD regex** | 🔴 **退化成字面量 `b`** |
+ *
+ * 上表最后一列的**证据是观测到的失败分布**，不是读源码推的：xplat 基线里
+ * `selftest-locale-ratchet.mjs` 只在 `darwin-arm64` 那一格红，`win32-x64` 那格没有它。
+ *
+ * 后果不是报错，是**零命中**：本机实测 `[实测]`，同一棵 HEAD 上
+ * 带 `\b` 命中 63 个文件，退化成字面 `b` 命中 **0 个** —— 与 macOS 上观测到的
+ * 「只从提交树里扫到 0 个 t() 字面量 key」逐字吻合（xplat 基线里那条 `real-bug`）。
+ *
+ * ⚠️ 也**不能**改用 `-w`：`-w` 要求匹配两端都落在词边界上，而这个模式的**右端是
+ * `['"]`，不是词字符** —— `-w` 在这里判据不同，不是等价替换。
+ * 用 POSIX ERE 里普遍存在的 `(^|[^[:alnum:]_])` 显式写出左边界。
+ * `[实测]` 三种写法在本机 glibc 上同为 63 个文件。
  */
+const GREP_PATTERN = '(^|[^[:alnum:]_])t\\([[:space:]]*[\'"]';
 const grepOut = spawnSync(
   'git',
-  ['grep', '-n', '-I', '-E', '\\bt\\([[:space:]]*[\'"]', 'HEAD', '--', 'apps/web/src'],
+  ['grep', '-n', '-I', '-E', GREP_PATTERN, 'HEAD', '--', 'apps/web/src'],
   { cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
 );
-// git grep 无命中时退出码 1；那是"零命中"不是错误，但这里零命中意味着扫描坏了。
+/*
+ * ⚠️ `git grep` 的退出码有三档：0=有命中，1=零命中，**≥2=出错**（正则不认、
+ * 找不到 HEAD、参数不对…）。只读 `.stdout` 会把第三档折叠进第二档 ——
+ * 「git 报错了」和「一个 key 都没有」在这里就长得一模一样。
+ *
+ * 下面那道 `refs.size < 100` 地板确实把两者都拦住了，但它说的是「扫描坏了」，
+ * 而**它并不知道自己拦住的是哪一种**：诊断词句碰巧说对了，靠的是地板，不是查过退出码。
+ * 出错这一档要单独判出来，并且要说**不同的话** —— 否则下一个人会照着
+ * 「扫描坏了」去查扫描器，而真正的原因在 stderr 里躺着没人读。
+ */
+if (grepOut.error) {
+  say(`✘ 起不了 git grep 子进程：${grepOut.error.message}`);
+  process.exit(1);
+}
+if (typeof grepOut.status === 'number' && grepOut.status >= 2) {
+  say(`✘ git grep 报错（退出码 ${grepOut.status}）—— 这**不是**"零命中"，是命令本身失败了：`);
+  say(`    模式：${GREP_PATTERN}`);
+  for (const l of String(grepOut.stderr ?? '')
+    .split('\n')
+    .filter(Boolean))
+    say(`    ${l}`);
+  say('  最可能的成因：这个平台的正则实现不认这个模式（见上面那张表）。');
+  process.exit(1);
+}
 const refs = new Map();
 for (const line of (grepOut.stdout ?? '').split('\n')) {
   const m = /^HEAD:([^:]+):\d+:(.*)$/.exec(line);
@@ -269,6 +314,8 @@ for (const line of (grepOut.stdout ?? '').split('\n')) {
 if (refs.size < 100) {
   say(`✘ 只从提交树里扫到 ${refs.size} 个 t() 字面量 key —— 扫描坏了，不是"界面没文案了"`);
   say('  （对空集返回绿的守卫比没有守卫更坏：它看起来像在守着。）');
+  say(`  git grep 退出码 ${grepOut.status}（0=有命中 / 1=零命中）——`);
+  say('  它没报错，所以这是**真的一条都没匹配上**：模式与源码的实际写法对不上了。');
   process.exit(1);
 }
 

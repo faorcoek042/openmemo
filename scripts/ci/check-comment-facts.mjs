@@ -90,6 +90,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDirectRun } from '../lib/entrypoint.mjs';
 
 const REPO = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 
@@ -617,6 +618,12 @@ function main() {
   console.log('全部对得上。');
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+/*
+ * ⚠️ 入口守卫只许用 `isDirectRun()`（判据见 scripts/lib/entrypoint.mjs 文件头）。
+ * 原来那句 `resolve(argv[1]) === resolve(fileURLToPath(...))` 看着像已经归一化过了，
+ * 但 **`resolve()` 不解符号链接** —— 它只做词法归一化（`.` / `..` / 相对转绝对）。
+ * `import.meta.url` 是 realpath 过的，所以经软链调用时这一句照样失配、照样静默 exit 0。
+ */
+if (isDirectRun(import.meta.url, process.argv[1])) {
   main();
 }

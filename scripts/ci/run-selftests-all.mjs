@@ -51,6 +51,7 @@ import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { basename, join, dirname } from 'node:path';
 import { SKIP_EXIT_CODE } from './platform-scope.mjs';
+import { isDirectRun } from '../lib/entrypoint.mjs';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -349,6 +350,9 @@ function reportAndExit(results) {
 }
 
 // 被 selftest import 时不自动跑。
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// ⚠️ 只许用 `isDirectRun()`（判据见 scripts/lib/entrypoint.mjs 文件头）：
+// `fileURLToPath(import.meta.url) === argv[1]` 在软链路径下静默失配 ⇒ 一环都不跑，
+// **而且退出 0** —— 探针那一步会记 ✔，日志里却一行都没有。
+if (isDirectRun(import.meta.url, process.argv[1])) {
   await main();
 }
