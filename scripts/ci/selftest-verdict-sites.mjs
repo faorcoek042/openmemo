@@ -19,10 +19,11 @@
  *    迟早会因为别人的改动而红 —— 那种红没有信息，只会训练人忽略这道门。
  */
 import { strict as assert } from 'node:assert';
-import { detect, scan } from './count-verdict-sites.mjs';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { countCalls, detect, scan } from './count-verdict-sites.mjs';
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 let n = 0;
 const it = (name, fn) => {
@@ -148,6 +149,80 @@ it('阴性对照：纯判据库（没有 exit/exitCode）不该被要求有判�
     scan({ dir, instruments: [] }),
   );
   assert.deepEqual(problems, []);
+});
+
+console.log('\nD 组：定义处不许被算成调用点（`lint-workflows` 那一路实测出来的偏差）');
+
+/**
+ * `2026-09-06` 由 `lint-workflows` 那一路实测发现：
+ * `count-verdict-sites` 给 `lint-workflows.mjs` 报 **90**，而真实调用点是 **89**。
+ * 多出的那一处是 `function must(cond, msg)` **自身的定义** ——
+ * 朴素的 `(^|[^A-Za-z0-9_.$])must\s*\(` 会匹配上 `function` 后面那个空格 + `must(`。
+ *
+ * `[我核过]` 全仓 **22 个文件**中招（自带助手的守卫几乎都中）。
+ *
+ * ⚠️ 下面**不拿 `lint-workflows.mjs` 的 89 当写死的期望值**。理由和这份自检整体的
+ *    取舍一致：那是一个**别人正在改**的文件，把它的调用点数钉在这里，第一次有人
+ *    加/删一条 `must()` 就会红 —— 而那种红没有信息，只会训练人忽略这道门。
+ *    改成钉**不变式**：`新实现 === 朴素实现 − 该文件里 function 定义的个数`。
+ *    文件怎么改这条都成立；而谁把修复退回去，它当场红。
+ */
+const NAIVE = (code, name) =>
+  (code.match(new RegExp(`(^|[^A-Za-z0-9_.$])${name}\\s*\\(`, 'gm')) ?? []).length;
+const DEFS = (code, name) =>
+  (
+    code.match(new RegExp(`(^|[^A-Za-z0-9_.$])(?:async\\s+)?function\\s+${name}\\s*\\(`, 'gm')) ??
+    []
+  ).length;
+
+it('★★ 自带 `function` 助手：新实现数对，朴素实现多算 1', () => {
+  const src = `function must(c, m) { if (!c) throw new Error(m); }\nmust(a);\nmust(b);\nmust(c);\n`;
+  assert.equal(countCalls(src, 'must'), 3, '新实现应当只数 3 处调用');
+  assert.equal(NAIVE(src, 'must'), 4, '朴素实现应当多算那一处定义（这就是被实测到的偏差）');
+});
+
+it('★★ `async function` 定义同样不算调用点', () => {
+  const src = `async function judge(x) { return x; }\nawait judge(1);\n`;
+  assert.equal(countCalls(src, 'judge'), 1);
+  assert.equal(NAIVE(src, 'judge'), 2);
+});
+
+it('★ 助手**从别的文件 import** 进来时本文件没有定义行 —— 不许被减掉', () => {
+  const src = `import { must } from './x.mjs';\nmust(a);\nmust(b);\n`;
+  assert.equal(countCalls(src, 'must'), 2, '减法式修法会在这里把真实调用点减错');
+  assert.equal(DEFS(src, 'must'), 0);
+});
+
+it('★ 箭头式定义（`const rec = (…) =>`）本来就没被误计，也不许被多减', () => {
+  const src = `const rec = (id, s) => results.push({ id, s });\nrec('C1', 'PASS');\nrec('C2', 'FAIL');\n`;
+  assert.equal(countCalls(src, 'rec'), 2);
+  assert.equal(NAIVE(src, 'rec'), 2, '箭头式定义本来就匹配不上（`rec` 后面是 " = ("）');
+});
+
+it('★★ 不变式：全仓每个脚本都满足「新 === 朴素 − function 定义数」', () => {
+  const dir = dirname(fileURLToPath(import.meta.url));
+  const helpers = ['assert', 'must', 'judge', 'ok', 'fail', 'rec', 'record', 'expect'];
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[^\n]*?\/\/[^\n]*$/gm, '');
+  let checked = 0;
+  let sawBiasedFile = false;
+  for (const f of readdirSync(dir).filter((x) => x.endsWith('.mjs'))) {
+    const code = strip(readFileSync(join(dir, f), 'utf8'));
+    for (const h of helpers) {
+      const naive = NAIVE(code, h);
+      if (naive === 0) continue;
+      const defs = DEFS(code, h);
+      assert.equal(
+        countCalls(code, h),
+        naive - defs,
+        `${f} 的 ${h}(): 新实现应当等于 朴素(${naive}) − 定义(${defs})`,
+      );
+      if (defs > 0) sawBiasedFile = true;
+      checked++;
+    }
+  }
+  assert.ok(checked > 50, `只核到 ${checked} 组，扫描面塌了`);
+  // ⚠️ 阴性对照：全仓一个"自带定义"的脚本都没有的话，上面那条不变式就是空转的。
+  assert.ok(sawBiasedFile, '全仓没有任何自带 function 助手的脚本 —— 这条不变式在空转');
 });
 
 console.log(`\n\x1b[32m✔ selftest-verdict-sites: ${n} 条全过\x1b[0m`);

@@ -291,6 +291,31 @@
 `single-source-baseline.json` 的 29 条只能停在原地，没有任何力量逼人收紧。
 不是缺陷，是一次设计取舍 —— 登记在这里是为了它别被忘掉。
 
+### ⑤ 🟡 `selftest-build-whisper.sh` 在干净 worktree 上直接跑是红的
+
+`[由 lint-workflows 那一路实测]` 报 `Cannot find module packages/shared/dist/index.js`。
+
+**不是 master 的伤** —— CI 里 `pnpm build:safe` 先跑，所以它在 CI 上是绿的。
+但它意味着**这条自检在本机无法直接复现**：谁想在本地重跑它，得先 `pnpm build:safe`。
+
+⚠️ 值得记的是这个形状本身：**一条"只能在 CI 上跑得动"的自检，等于没有人在改它的时候
+验过它**。要么在脚本开头把这个前提检出来并说人话（"先跑 `pnpm build:safe`"），
+要么让它不依赖 `dist`。本轮只登记，未实现。
+
+### ⑥ 🟡 `cold-start-audit.mjs` 判据薄 —— 已确认在册，仍不补
+
+见 §四① 的「重查结论」第二类：1,216 行、13 个 `hdr()` 分节，
+全文只有 8 处能置 `exitCode = 1`，且没有任何账本。
+三轮重查（#99 / #100 / 本轮）都把它列出来，都**没有自己补** —— 那是另一个改动面。
+`[读码]` 仍然**没有人逐节核对哪几节只打印不判**。这条是下一个人的活。
+
+### ⑦ 🟢 两条只登记、明确不做的
+
+- `apps/daemon/src/storage/move.test.ts` **全文**没读过 —— #97 只核到
+  「copy 慢路径调 `verifyTreesMatch`」这一层接线存在，没核它钉得多严。
+- `e2e-datadir` 那 **5 次历史运行**（2026-08-09）的日志正文没拉过 ——
+  想确认「C4 在 Windows 上曾经真的产出过 PASS」，去拉 run `31298412129` 的 Windows job。
+
 ---
 
 ### ⑤ 🟡 `lint-workflows` 覆盖度：本轮量完了，但方法有三个**已知盲区**

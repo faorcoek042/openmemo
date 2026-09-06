@@ -40,6 +40,15 @@
  * ③④⑤⑥ 都是「**多处判断 → 一个出口**」或「**一条判断管一整张表**」，
  * 所以**"退出点只有一个"不等于"判据只有一条"**。这是这个脚本存在的全部理由。
  *
+ * ## 🔴 第三轮：**定义处被算成了调用点**（2026-09-06，由 `lint-workflows` 那一路实测）
+ *
+ * 它实测出 `lint-workflows.mjs` 被报成 **90**，而真实调用点是 **89** —— 多的那一处是
+ * `function must(cond, msg)` **自身的定义**。`[我核过]` 全仓 **22 个文件**中招
+ * （凡是自带助手的守卫几乎都中，`e2e-notes-audit` / `simulate-user-launch` 各多 2）。
+ *
+ * 修法见 `countCalls()` 上面那段：**在匹配时就认出定义处并跳过，不用减法**。
+ * 减法在「助手是 import 进来的」那种文件上会把真实调用点减错。
+ *
  * ## ⚠️ 为什么不用 grep
  *
  * `[我核过]` 本机的 `grep` 是 **ugrep 7.8.4**，而 `grep -E '(^|[^a-z])rec\('`
@@ -68,8 +77,37 @@ const CI = dirname(fileURLToPath(import.meta.url));
 /** 注释里的 `rec(` 不是判据处 —— 本仓注释极长，不剥会把数字抬高一大截。 */
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[^\n]*?\/\/[^\n]*$/gm, '');
 
-const calls = (code, name) =>
-  (code.match(new RegExp(`(^|[^A-Za-z0-9_.$])${name}\\s*\\(`, 'gm')) ?? []).length;
+/**
+ * 数 `name(` 的**调用点**。
+ *
+ * ⚠️ **定义处不是调用点。** `function must(cond, msg) {` 里那个 ` must(` 会被朴素的
+ *    `(^|[^A-Za-z0-9_.$])must\s*\(` 匹配上。`[实测]` 全仓 **22 个文件**因此各多算 1~2 处
+ *    —— `lint-workflows.mjs` 报 90 而真实调用点是 **89**（由 `lint-workflows` 那一路实测发现）。
+ *    偏差本身不大，但它偏在**每个自带助手的脚本**上，也就是几乎所有守卫。
+ *
+ * ⚠️ **刻意不用减法**（"数完再减掉 `function\s+name\s*\(` 的个数"）。减法有两个洞：
+ *    ① 助手定义在**别的文件**、本文件 `import` 进来时，本文件根本没有定义行，
+ *       减了就把真实调用点减没了；
+ *    ② 定义写法一变，减法那一侧要跟着改，**而它不会自己红**。
+ *    这里改成**在匹配的时候就把定义处认出来并跳过** —— 少一处需要同步维护的地方。
+ *
+ * `[我核过]` 箭头式定义（`const rec = (…) =>`、`const record = (`）**本来就匹配不上**：
+ * `rec` 后面是 ` = (`，中间那个 `=` 让 `\s*\(` 失配。所以不需要额外处理，
+ * 也**不该**为它加减法 —— 那会把它减成负的。
+ *
+ * ⚠️ **已知残留偏差**：类/对象里的方法简写 `must(a, b) { … }` 仍会被算成一处调用。
+ *    `[我核过]` 本仓今天**没有**用这种写法定义的判据助手（我第一版的探测正则在
+ *    `selftest-duplicate-declarations.mjs` 上报过一个，核下来是**误报** ——
+ *    `[^)]*` 跨行吃进了一个多行 `assert(` 调用，而它的模板串里正好有个 `{`）。
+ *    真出现了，这个数会偏大 1。这也正是输出写作 `≥N`、只用来发现 0 的原因 —— 见文件头。
+ */
+export const countCalls = (code, name) => {
+  const re = new RegExp(`(^|[^A-Za-z0-9_.$])(async\\s+)?(function\\s+)?${name}\\s*\\(`, 'gm');
+  let n = 0;
+  for (const m of code.matchAll(re)) if (m[3] === undefined) n++;
+  return n;
+};
+const calls = countCalls;
 
 /** 显式助手的名字表。**只用于识别写法**，不是白名单：没命中会往下走 ③④。 */
 const HELPERS = ['assert', 'must', 'judge', 'ok', 'fail', 'rec', 'record', 'expect'];
