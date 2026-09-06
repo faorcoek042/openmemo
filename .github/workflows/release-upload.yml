@@ -329,3 +329,82 @@ jobs:
         run: |
           set -euo pipefail
           sha256sum -c SHA256SUMS
+
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  # 验证链的最后一环：**发布页正文里印的那三行 sha256，和 CI 算出来的一样吗？**
+  #
+  # ## 它补的是链条上唯一一处靠人手抄的东西
+  #
+  # 上面 `verify` 走完之后，我们已经知道「匿名从公开 URL 下到的字节 == CI 自己算的
+  # `SHA256SUMS`」。这条链很结实 —— **但它从头到尾没有读过发布页正文一个字。**
+  # 而用户真正会拿去核对的那三行，是**人手抄进正文的**。
+  #
+  #   ⇒ 抄错一位，`verify` 照样绿，`sha256sum -c` 照样绿，整条链上没有一处会红。
+  #     用户拿页面上的数一核对不上，得出的结论会是"下载损坏了 / 被掉包了"，
+  #     而字节其实是好的，只有那张纸印错了。
+  #
+  # v0.7.6 发版时这一步做了 —— 靠的是**在 `/tmp` 里临时写个脚本跑一遍**。
+  # 本仓已经反复立过这条判据（上面 e2e 闸门那一段也写着同一句）：
+  #
+  #   > **「一个需要人记得去做的判据，等价于一个迟早不会被做的判据。」**
+  #
+  # ## ⚠️ 为什么它在**这个位置**（`needs: verify`，全流程最后一个 job）
+  #
+  # 它要同时拿到两样东西，而这两样东西只有到这一刻才都齐：
+  #   ① **CI 那侧的 `SHA256SUMS`** —— `upload` 现算并作为 `release-upload-plan` 传下来的；
+  #   ② **发布页正文** —— 它是发版的人写的，写在 release 上，不在任何 artifact 里。
+  # 放在 `upload` 之前没有 ①；放进 `verify` 会给那个 job 带上 token，
+  # 而 `verify` 存在的全部理由就是"手里没有凭证"（见它 permissions 上那段注释）。
+  # 所以它是独立的一个 job，排在最后。
+  #
+  # ## ⚠️ 已知边界：它验的是**这一刻**的正文
+  #
+  # 之后再改正文（本仓的规矩是"订正只能追加"，所以正文**确实会**被再编辑）
+  # **不在这道门的覆盖面内** —— `release-upload.yml` 是 dispatch-only，
+  # 而 lint-workflows 的 T-154 ④ 明令它不许被 `release` 事件自动触发
+  # （上传是对外动作，必须有人按）。要覆盖"事后编辑"得另开一条 `on: release` 的
+  # workflow，那是另一件事，这里不假装已经做了。
+  # ═══════════════════════════════════════════════════════════════════════════════════
+  body-check:
+    name: 发布页正文 ⟷ CI 的 SHA256SUMS（机器比对，会真的红）
+    # dry-run 时 `verify` 被跳过 ⇒ 本 job 按默认的 success() 语义一起跳过。
+    # 这是对的：dry-run 的语义是"只出计划，不对 release 的现状作任何断言"。
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      # 只读。它读两样东西：checkout 出比对脚本，和 release 的正文。
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # CI 那一侧 —— `upload` 现算的清单，`verify` 刚刚拿它匿名复核过。
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-upload-plan
+          path: dist/release-stage
+
+      # 发布页那一侧。只读一次 release，不写任何东西。
+      - name: 取发布页正文
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release-body
+          gh api "repos/${{ github.repository }}/releases/tags/${{ github.event.inputs.tag }}" \
+            --jq '.body' > dist/release-body/body.md
+          # 绿的时候也把量到的规模打出来 —— 一个只在红的时候说话的取数步骤，
+          # 取回空串时看起来和"取到了"一模一样。
+          echo "── 发布页正文 $(wc -c < dist/release-body/body.md) 字节 / $(wc -l < dist/release-body/body.md) 行"
+
+      # 判据本体。地板在脚本里：**两侧任何一侧数到 0 条就红**，
+      # 拒绝在空集上报绿（反向验证见 scripts/ci/selftest-compare-body.mjs）。
+      - name: 机器比对（抄错一位就红）
+        run: |
+          node scripts/ci/compare-body-vs-ci.mjs \
+            --body dist/release-body/body.md \
+            --sums dist/release-stage/SHA256SUMS
